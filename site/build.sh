@@ -24,6 +24,8 @@ set -- \
   "games/chess.js"         "chess-game.js" \
   "seed.js"                "seed.js" \
   "board.js"               "board.js" \
+  "board-image.js"         "board-image.js" \
+  "share.js"               "share.js" \
   "transport/protocol.js"  "protocol.js" \
   "styles.css"             "styles.css"
 

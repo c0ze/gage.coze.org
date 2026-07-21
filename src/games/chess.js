@@ -49,6 +49,12 @@
 //       (en passant); without it the renderer falls back to "destination has a
 //       glyph".
 //
+//   positionKey(state) -> string                  OPTIONAL. A URL-safe ASCII key
+//       for the VISUAL position (share-image cache-key). Used by Gage.positionKey
+//       (src/share.js) when present; else a generic key is derived from view().
+//       Games with a canonical encoding (chess: FEN placement field) should
+//       implement it so transpositions collapse to one key. See src/share.js.
+//
 // STATE SHAPE (chess): { game: "chess", moves: Move[] } where
 //   Move = { from, to, promotion? }. We store the MOVE LIST (not just a FEN) and
 //   replay it into chess.js on demand, so position history is preserved — rules
@@ -206,6 +212,17 @@
     );
   }
 
+  // positionKey(state) -> string  (the CONTRACT image cache-key)
+  // The VISUAL position only: chess.js .fen()'s FIRST field (piece placement),
+  // with "/" -> "-". Castling rights, en-passant target, side-to-move and clocks
+  // are intentionally dropped, so transpositions that reach the same board share
+  // ONE key (and therefore one cached image). URL-safe ASCII (piece letters +
+  // digits + "-"). E.g. after 1.e4:
+  //   rnbqkbnr-pppppppp-8-8-4P3-8-PPPP1PPP-RNBQKBNR
+  function positionKey(state) {
+    return engine(state).fen().split(" ")[0].replace(/\//g, "-");
+  }
+
   Gage.games[ID] = {
     id: ID,
     boardSize: { rows: 8, cols: 8 },
@@ -219,5 +236,6 @@
     terminal,
     squareAt,
     isCapture,
+    positionKey,
   };
 })();

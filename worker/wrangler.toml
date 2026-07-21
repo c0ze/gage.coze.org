@@ -1,0 +1,28 @@
+# Cloudflare Worker config for the Gage board-card service.
+#
+# This Worker serves two path prefixes on gage.coze.org; GitHub Pages serves the
+# rest of the site. The routes below claim ONLY /g/* and /img/* so the Pages
+# deployment keeps handling "/", "/lib/...", etc.
+#
+# Deploy: see worker/README.md (wrangler login; r2 bucket create; wrangler deploy).
+
+name = "gage-board-card"
+main = "src/index.js"
+
+# Placeholder pinned date (do not auto-compute). Bump when you want newer runtime
+# semantics; any recent date enables the standard fetch/Response/R2 APIs used here.
+compatibility_date = "2024-11-01"
+
+# Route ONLY the card + image paths to this Worker. zone_name ties the routes to
+# the coze.org zone on this Cloudflare account (coze.org must be a zone here).
+# The rest of gage.coze.org (root, /lib, assets) is served by GitHub Pages.
+routes = [
+  { pattern = "gage.coze.org/g/*",   zone_name = "coze.org" },
+  { pattern = "gage.coze.org/img/*", zone_name = "coze.org" },
+]
+
+# R2 bucket holding the rendered board PNGs, content-addressed by position key.
+# The binding name "BUCKET" is what src/index.js reads as env.BUCKET.
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "gage-board-cache"

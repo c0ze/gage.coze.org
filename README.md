@@ -117,6 +117,23 @@ the first token that won't apply (illegal/unparseable in its position) stops the
 walk and is returned in `error` — that is the desync / cheat signal. Full grammar
 is in `src/transport/protocol.js`.
 
+## Board-card Worker (`worker/`)
+
+The in-tweet share card + human on-ramp are served by a small Cloudflare Worker
+in [`worker/`](worker/) — routed for `gage.coze.org/g/*` (Twitter/OG card HTML
+for a seed) and `gage.coze.org/img/*` (the board PNG, cached in R2). It has **no
+game logic**: it base64url-decodes the seed's `meta` and reads/writes R2.
+GitHub Pages still serves the rest of the site. Deploy:
+
+    cd worker
+    wrangler login
+    wrangler r2 bucket create gage-board-cache
+    wrangler deploy            # also installs the /g/* and /img/* routes
+
+The routes require `coze.org` to be a zone on the Cloudflare account. See
+[`worker/README.md`](worker/README.md) for the full contract and test
+(`node worker/test/worker.test.mjs`).
+
 ## Next
 
 1. **Finish the game orchestration:** the DOM layer is wired, so what's left is
