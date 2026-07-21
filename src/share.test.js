@@ -91,8 +91,8 @@ function stateFromSans(sans) {
   const start = chess.initialState();
   assert.strictEqual(
     Gage.positionKey(chess, start),
-    "rnbqkbnr-pppppppp-8-8-8-8-PPPPPPPP-RNBQKBNR",
-    "start position key"
+    "c2-rnbqkbnr-pppppppp-8-8-8-8-PPPPPPPP-RNBQKBNR",
+    "start position key (versioned)"
   );
 
   const afterE4 = stateFromSans(["e4"]);
@@ -100,14 +100,14 @@ function stateFromSans(sans) {
   const k2 = Gage.positionKey(chess, stateFromSans(["e4"]));
   assert.strictEqual(
     k1,
-    "rnbqkbnr-pppppppp-8-8-4P3-8-PPPP1PPP-RNBQKBNR",
-    "1.e4 key matches the CONTRACT example"
+    "c2-rnbqkbnr-pppppppp-8-8-4P3-8-PPPP1PPP-RNBQKBNR",
+    "1.e4 key matches the CONTRACT example (versioned)"
   );
   assert.strictEqual(k1, k2, "positionKey is deterministic for the same position");
   // URL-safe ASCII: letters, digits, "-" only.
   assert.ok(/^[A-Za-z0-9-]+$/.test(k1), "key is URL-safe ASCII");
-  // Delegates to the game module's own positionKey.
-  assert.strictEqual(k1, chess.positionKey(afterE4), "Gage.positionKey uses chess.positionKey");
+  // Delegates to the game module's own positionKey, under the version prefix.
+  assert.strictEqual(k1, "c2-" + chess.positionKey(afterE4), "Gage.positionKey = version + chess.positionKey");
   ok("positionKey is deterministic and matches the CONTRACT key");
 })();
 
@@ -199,7 +199,7 @@ function stateFromSans(sans) {
   assert.strictEqual(env.game, "chess", "envelope game id");
   sameShape(env.state, state, "decoded state deep-equals the source state");
 
-  const expectedKey = "rnbqkbnr-pppppppp-8-8-4P3-8-PPPP1PPP-RNBQKBNR";
+  const expectedKey = "c2-rnbqkbnr-pppppppp-8-8-4P3-8-PPPP1PPP-RNBQKBNR";
   sameShape(
     env.meta,
     { w: "alice", b: "bob", turn: "b", san: "e4", key: expectedKey },
@@ -239,7 +239,7 @@ function stateFromSans(sans) {
   assert.ok(/^[A-Za-z0-9._-]+$/.test(k), "generic key is URL-safe ASCII");
   // Empties are ".", cells encode color + glyph-codepoint(base36); rows joined by
   // "-", cells by "_". "K"=75->"23", "Q"=81->"29" in base36.
-  assert.strictEqual(k, "w23_.-._b29", "generic key encodes cells/rows deterministically");
+  assert.strictEqual(k, "c2-w23_.-._b29", "generic key encodes cells/rows deterministically (versioned)");
 
   // A different board yields a different key; an identical board yields the same.
   const fake2 = Object.assign({}, fake, {

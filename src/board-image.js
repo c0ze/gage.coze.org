@@ -99,11 +99,35 @@
     return canvas;
   }
 
+  // Twitter's summary_large_image card is a fixed ~1.91:1 and CENTER-CROPS a
+  // square image down to the middle strip — so a bare square board loses its top
+  // and bottom ranks. renderCardCanvas letterboxes the (square) board into a
+  // 1200x630 card so the WHOLE board survives the crop.
+  const CARD_W = 1200;
+  const CARD_H = 630;
+  const CARD_BG = "#302e2b"; // dark frame around the board
+  const CARD_PAD = 16;
+
+  function renderCardCanvas(gameModule, state, opts) {
+    const board = renderBoardCanvas(gameModule, state, opts); // square
+    const canvas = document.createElement("canvas");
+    canvas.width = CARD_W;
+    canvas.height = CARD_H;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = CARD_BG;
+    ctx.fillRect(0, 0, CARD_W, CARD_H);
+    const side = CARD_H - CARD_PAD * 2; // square board fills the card height
+    const x = Math.round((CARD_W - side) / 2);
+    const y = Math.round((CARD_H - side) / 2);
+    ctx.drawImage(board, x, y, side, side); // scale square board to fit, centered
+    return canvas;
+  }
+
   // boardImageBlob(gameModule, state, opts?) -> Promise<Blob>
-  // Renders the canvas and resolves its PNG blob. Rejects if the browser can't
-  // produce a blob (toBlob yields null) — callers treat the image as best-effort.
+  // Renders the 1.91:1 CARD (letterboxed board) and resolves its PNG blob. Rejects
+  // if the browser can't produce a blob — callers treat the image as best-effort.
   function boardImageBlob(gameModule, state, opts) {
-    const canvas = renderBoardCanvas(gameModule, state, opts);
+    const canvas = renderCardCanvas(gameModule, state, opts);
     return new Promise(function (resolve, reject) {
       if (typeof canvas.toBlob !== "function") {
         reject(new Error("[gage] canvas.toBlob unsupported"));
@@ -117,5 +141,6 @@
   }
 
   Gage.renderBoardCanvas = renderBoardCanvas;
+  Gage.renderCardCanvas = renderCardCanvas;
   Gage.boardImageBlob = boardImageBlob;
 })();

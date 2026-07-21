@@ -58,14 +58,22 @@
     return rowKeys.join("-");
   }
 
+  // Card image format version — PREFIXES the cache key so that when the rendered
+  // image changes (e.g. square -> 1.91:1 letterboxed card), old cached images are
+  // orphaned instead of stuck (the store is first-write-wins). Bump on any image
+  // format change.
+  const KEY_VERSION = "c2";
+
   // positionKey(gameModule, state) -> string
   // Prefer the game's own canonical key (collapses transpositions properly);
-  // otherwise fall back to the generic view-derived key. VISUAL position only.
+  // otherwise fall back to the generic view-derived key. VISUAL position only,
+  // prefixed with KEY_VERSION so the image cache invalidates on format changes.
   function positionKey(gameModule, state) {
-    if (gameModule && typeof gameModule.positionKey === "function") {
-      return gameModule.positionKey(state);
-    }
-    return genericKey(gameModule, state);
+    const raw =
+      gameModule && typeof gameModule.positionKey === "function"
+        ? gameModule.positionKey(state)
+        : genericKey(gameModule, state);
+    return KEY_VERSION + "-" + raw;
   }
 
   // ---- URLs ---------------------------------------------------------------
