@@ -238,32 +238,53 @@
   // ---- entry ------------------------------------------------------------
   function mountPanel() {
     ensurePanel();
-    refresh();
     // X is a single-page app: it navigates by URL change WITHOUT a reload, and it
-    // updates location.href BEFORE the new thread's DOM is in place. So on a URL
-    // change we don't refresh once (that would bind to the old / soon-detached
-    // container) — we run a short "settle" loop that re-reads and rebinds a few
-    // times until the new thread hydrates. refresh() is idempotent and tears down
-    // the prior observer, so the extra runs are harmless; the last one that sees
-    // the hydrated thread is the one that sticks.
-    let lastHref = location.href;
+    // updates location.href BEFORE the new thread's DOM is in place. It ALSO
+    // hydrates a directly-opened permalink / hard reload asynchronously — the
+    // focal tweet lands a beat AFTER our content script first runs. So we must
+    // never refresh just once: a single read races hydration and, on a real game
+    // thread not in the DOM yet, wrongly decides "not a game" and hides the panel
+    // with no retry — the bug where opening a #gage tweet link directly did
+    // nothing. Instead we "settle": re-read and rebind until the thread is
+    // recognized (or we give up). refresh() is idempotent and tears down the prior
+    // observer, so the extra runs are harmless; the run that sees the hydrated
+    // thread is the one that sticks, after which the observer drives updates.
     let settleTimer = null;
-    function settle() {
+    // settle(canEarlyStop): re-read + rebind on a short interval until the thread
+    // has settled. Two callers with different needs:
+    //   • initial mount (canEarlyStop = true): there is NO prior thread, so the
+    //     moment refresh() recognizes a game (panelActive) we can stop — the
+    //     observer drives it from there. The long cap just covers a slow cold load.
+    //   • URL change (canEarlyStop = false): X flips location.href BEFORE swapping
+    //     the DOM, so the OLD thread is briefly still present and panelActive is
+    //     stale-true for the outgoing game. Early-stopping there would lock onto it
+    //     and miss the incoming game, so on nav we DON'T early-stop — we ride a
+    //     fixed bounded window until the new DOM has replaced the old, ending on
+    //     the settled thread. refresh() re-decides from the live DOM each call and
+    //     tears down the prior observer, so the interim re-reads are safe.
+    function settle(canEarlyStop) {
       if (settleTimer) clearInterval(settleTimer);
       let n = 0;
+      const maxTicks = canEarlyStop ? 20 : 6; // ~8s cap vs ~2.4s ride-through
       refresh();
       settleTimer = setInterval(function () {
+        if (canEarlyStop && panelActive) { clearInterval(settleTimer); settleTimer = null; return; }
         refresh();
-        if (++n >= 6) { clearInterval(settleTimer); settleTimer = null; } // ~2.4s window
+        if (++n >= maxTicks) { clearInterval(settleTimer); settleTimer = null; }
       }, 400);
     }
+    // Initial mount settles WITH early-stop (no prior thread to get stuck on), so a
+    // thread that hydrates a beat after we load — the normal case for a directly-
+    // opened tweet permalink or a hard reload — is picked up rather than missed.
+    settle(true);
+    let lastHref = location.href;
     setInterval(function () {
       if (location.href !== lastHref) {
         lastHref = location.href;
         // New thread: a fresh #gage game pops up (reset minimize/close).
         uiDismissed = false;
         uiCollapsed = false;
-        settle();
+        settle(false); // ride through X's URL-before-DOM swap; no stale early-stop
       }
     }, 500);
   }
