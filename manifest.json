@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "Gage",
+  "version": "0.0.1",
+  "description": "Turn-by-turn board games on X — no API. Chess first; dev build.",
+  "content_scripts": [
+    {
+      "matches": ["*://x.com/*", "*://twitter.com/*"],
+      "js": [
+        "src/vendor/chess.js",
+        "src/fen.js",
+        "src/games/chess.js",
+        "src/board.js",
+        "src/seed.js",
+        "src/content.js"
+      ],
+      "css": ["src/styles.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}
