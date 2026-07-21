@@ -33,6 +33,7 @@
     const grid = document.createElement("div");
     grid.className = "gage-board";
     grid.style.gridTemplateColumns = "repeat(" + cols + ", 1fr)";
+    grid.style.gridTemplateRows = "repeat(" + rows + ", 1fr)"; // uniform rows — empty ranks must not collapse
 
     function draw() {
       const cells = game.view(current);

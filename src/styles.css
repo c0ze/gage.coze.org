@@ -29,6 +29,7 @@
 .gage-board {
   display: grid;
   grid-template-columns: repeat(8, 1fr);
+  grid-template-rows: repeat(8, 1fr);
   width: 316px;
   height: 316px;
   border-radius: 8px;
