@@ -43,6 +43,12 @@
     reply: '[data-testid="reply"]',
     editor: '[data-testid="tweetTextarea_0"]',
     send: '[data-testid="tweetButtonInline"]',
+    // Identity reads (verified live 2026-07-22):
+    //  [8] Logged-in user: the profile tab link -> href "/<handle>".
+    //  [9] A tweet's author: its User-Name block's first profile link -> href
+    //      "/<handle>" (scoped to ONE article so we can read the ROOT author).
+    profileLink: 'a[data-testid="AppTabBar_Profile_Link"]',
+    userName: '[data-testid="User-Name"]',
   };
   // Dev-safe: fill the reply but let the player click "Reply". Flip to true for
   // hands-free posting once the full game flow is trusted.
@@ -61,6 +67,51 @@
   function tweetTextOf(article) {
     const el = article.querySelector(SEL.tweetText);
     return el ? el.innerText : "";
+  }
+
+  // "/Rival" | "/rival/" | "/rival/status/1" -> "rival". Handles are the first
+  // path segment; drop a leading "@" too and lowercase. Anything without a real
+  // segment (e.g. "/", "/home") yields null so callers can treat it as unknown.
+  // X's own routes are not user handles; a link to one must never be mistaken for
+  // a player (the doc comment above promised "/home" -> null).
+  const RESERVED_ROUTES = new Set([
+    "home", "explore", "notifications", "messages", "i", "settings", "compose",
+    "search", "hashtag", "bookmarks", "lists", "topics", "jobs", "tos", "privacy",
+    "login", "logout", "signup",
+  ]);
+  function handleFromHref(href) {
+    if (!href) return null;
+    const seg = String(href).replace(/^https?:\/\/[^/]+/i, "").split("/")[1];
+    if (!seg) return null;
+    const h = seg.replace(/^@/, "").toLowerCase();
+    if (!h || RESERVED_ROUTES.has(h)) return null;
+    return h;
+  }
+
+  // getMyHandle() -> string|null. The logged-in user's handle, lowercased, no
+  // "@"/"/". Reads the profile tab's href ("/<handle>"). null when logged out or
+  // the tab isn't in the DOM (e.g. a page without the nav rail).
+  function getMyHandle() {
+    const a = document.querySelector(SEL.profileLink);
+    return a ? handleFromHref(a.getAttribute("href")) : null;
+  }
+
+  // getRootAuthorHandle() -> string|null. The author of the FIRST tweet in the
+  // thread (the root / challenge), lowercased, no "@"/"/". On a conversation page
+  // the first article is the root; its User-Name block's first profile link is
+  // the author. null if no tweet is present yet.
+  function getRootAuthorHandle() {
+    const root = container().querySelector(SEL.article);
+    if (!root) return null;
+    // No author block -> unknown. Do NOT fall back to the whole article: an
+    // embedded / quoted tweet inside the root would inject a wrong profile link.
+    const nameBlock = root.querySelector(SEL.userName);
+    if (!nameBlock) return null;
+    const link = Array.from(nameBlock.querySelectorAll('a[href^="/"]'))
+      .map((x) => x.getAttribute("href"))
+      // Skip in-tweet links that aren't the author profile (status/photo/etc.).
+      .find((h) => h && !/\/(status|photo|search|hashtag|i)\b/.test(h));
+    return handleFromHref(link);
   }
 
   // Poll until getter() returns truthy or we time out (X renders async).
@@ -168,5 +219,13 @@
     };
   }
 
-  Gage.threadTransport = { readThreadMoves, postReply, observe, SELECTORS: SEL, AUTO_SEND };
+  Gage.threadTransport = {
+    readThreadMoves,
+    postReply,
+    observe,
+    getMyHandle,
+    getRootAuthorHandle,
+    SELECTORS: SEL,
+    AUTO_SEND,
+  };
 })();

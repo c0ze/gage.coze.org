@@ -15,6 +15,7 @@
         "src/transport/protocol.js",
         "src/transport/reconstruct.js",
         "src/transport/thread-dom.js",
+        "src/transport/orchestration.js",
         "src/content.js"
       ],
       "css": ["src/styles.css"],
