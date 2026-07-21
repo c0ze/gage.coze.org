@@ -13,7 +13,10 @@
 
   // --- guard: the core must have loaded (classic scripts, window.Gage) --------
   var Gage = window.Gage;
-  if (!Gage || !Gage.games || !Gage.games.chess || !Gage.renderGame || !Gage.protocol) {
+  if (
+    !Gage || !Gage.games || !Gage.games.chess || !Gage.renderGame || !Gage.protocol ||
+    !Gage.uploadBoardImage || !Gage.buildShareSeed || !Gage.gameUrl
+  ) {
     // If lib/ wasn't built (e.g. previewing without `sh site/build.sh`), fail
     // loudly in the board area rather than silently doing nothing.
     var mountFail = document.getElementById("board-mount");
@@ -47,6 +50,10 @@
   // --- state ------------------------------------------------------------------
   // The chosen opening move in SAN (e.g. "e4"), or null until one is made.
   var openingSan = null;
+  // The State immediately AFTER the chosen opening — the exact position we both
+  // upload an image for and encode into the share seed on Cast. null until a move
+  // is chosen (reset to null when the opening is changed).
+  var openingState = null;
 
   var chess = Gage.games[GAME_ID];
 
@@ -69,9 +76,28 @@
   function onFirstMove(mv) {
     if (openingSan !== null) return; // already locked to an opening; ignore
     openingSan = mv.text; // SAN, e.g. "e4"
+    openingState = mv.state; // the post-opening position
     lockBoardTo(mv.state);
     renderOpeningCaption();
     refreshCastState();
+
+    // Best-effort: start uploading the board image NOW, while the user types the
+    // rival handle. Doing it here (not on Cast) means the cache is likely warm by
+    // the time the tweet posts, and it keeps Cast inside the click gesture (no
+    // await before window.open). uploadBoardImage never throws — it resolves
+    // { error } — but we still guard with .catch so a rejection can't surface as
+    // an unhandled rejection or break this handler.
+    try {
+      Gage.uploadBoardImage(chess, mv.state)
+        .then(function (res) {
+          if (res && res.error) {
+            console.warn("[gage] board image upload failed (non-fatal):", res.error);
+          }
+        })
+        .catch(function () { /* best-effort: ignore */ });
+    } catch (e) {
+      /* uploadBoardImage shouldn't throw synchronously; ignore if it does */
+    }
   }
 
   // Re-render the board read-only at the committed position: a fresh render onto
@@ -104,9 +130,12 @@
     captionEl.appendChild(change);
   }
 
-  // Reset to the start position and let the player pick a different opening.
+  // Reset to the start position and let the player pick a different opening. The
+  // next chosen move re-triggers the image upload (see onFirstMove); no special
+  // handling needed here beyond clearing the captured opening + its state.
   function resetOpening() {
     openingSan = null;
+    openingState = null;
     captionEl.textContent = "Move a white piece to choose your opening.";
     mountInteractiveBoard();
     refreshCastState();
@@ -136,13 +165,26 @@
   // ---------------------------------------------------------------------------
   // Build the post with the SAME protocol the extension uses. formatMove yields
   // e.g.:  "♟ Chess challenge @rival — your move. #gage #chess [e4]"
+  // We then append a share link to the game page:
+  //   "<challenge> https://gage.coze.org/g/<seed>"
+  // The seed encodes the post-opening position + players so the Worker at that
+  // URL can serve a board-image card (on-ramp for non-installers). The link is
+  // ADDITIVE — it lives after the "[move] #gage" grammar, so parseMove still
+  // reads the move from the "[...]" slot unchanged. Challenger handle `w` is
+  // unknown here (the site never asks who's casting), so it's "".
   function buildChallengeText() {
-    return Gage.protocol.formatMove({
+    var challenge = Gage.protocol.formatMove({
       gameId: GAME_ID,
       moveText: openingSan,
       opponentHandle: rivalRaw(), // normalizeHandle adds "@" if missing
       isChallenge: true,
     });
+    var seed = Gage.buildShareSeed(chess, openingState, {
+      w: "", // challenger handle unknown on the site
+      b: rivalRaw(), // the rival we're challenging
+      san: openingSan, // the opening's SAN
+    });
+    return challenge + " " + Gage.gameUrl(seed);
   }
 
   // X web intent, text-only. Per spec we deliberately do NOT pass a url param —

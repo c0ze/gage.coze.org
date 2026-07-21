@@ -89,11 +89,42 @@
         // token; the player presses "Reply" to send (AUTO_SEND off). We do NOT
         // optimistically flip the board — the observer re-hydrates from the
         // thread once the reply lands, keeping the DOM the single source of truth.
-        const text = Gage.protocol.formatMove({
-          gameId: decision.gameId,
-          moveText: mv.text,
-          isChallenge: false,
-        });
+
+        // Best-effort: upload the board image for the position AFTER this move so
+        // the reply's share link renders an image card. Fire-and-forget —
+        // uploadBoardImage never throws (resolves { error }); the extra .catch is
+        // belt-and-suspenders so nothing here can block or break posting the move.
+        try {
+          Gage.uploadBoardImage(game, mv.state)
+            .then(function (res) {
+              if (res && res.error) {
+                console.warn("[gage] board image upload failed (non-fatal):", res.error);
+              }
+            })
+            .catch(function () { /* best-effort: ignore */ });
+        } catch (e) {
+          /* uploadBoardImage shouldn't throw synchronously; ignore if it does */
+        }
+
+        // Reply text = the move token grammar + a share link to the game page.
+        // The link is ADDITIVE (after "[move] #gage"), so parseMove still reads
+        // the move from the "[...]" slot on the other client. white/black come
+        // from the decision (decide() sets decision.white/decision.black), san is
+        // the move just played.
+        const text =
+          Gage.protocol.formatMove({
+            gameId: decision.gameId,
+            moveText: mv.text,
+            isChallenge: false,
+          }) +
+          " " +
+          Gage.gameUrl(
+            Gage.buildShareSeed(game, mv.state, {
+              w: decision.white,
+              b: decision.black,
+              san: mv.text,
+            })
+          );
         // Freeze further local input until the thread confirms our move.
         mount.style.pointerEvents = "none";
         setStatus("your move " + mv.text + " posted — press Reply to send");
