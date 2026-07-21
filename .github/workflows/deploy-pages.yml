@@ -31,6 +31,16 @@ jobs:
       - name: Build site/lib (copy shared core from src/)
         run: sh site/build.sh
 
+      # GitHub Pages behind Cloudflare: the edge caches assets by URL, so a
+      # *changed* file (same name) keeps serving its stale cached copy after a
+      # deploy. Stamp every local asset ref in index.html with the commit SHA so
+      # each deploy points at brand-new URLs the edge has never cached.
+      - name: Cache-bust local asset URLs
+        run: |
+          V="${GITHUB_SHA::8}"
+          sed -i -E "s#(src|href)=\"(lib/[^\"?]+|app\.js|styles\.css)\"#\1=\"\2?v=$V\"#g" site/index.html
+          echo "busted with v=$V:"; grep -oE "(src|href)=\"[^\"]+\?v=[^\"]+\"" site/index.html
+
       - name: Configure Pages
         uses: actions/configure-pages@v6
 
