@@ -31,8 +31,14 @@ mobile PWA. Rendering is a separate, client-side concern.
   stalemate, castling, en passant, promotion, draws).
 - ✅ Generic renderer draws **any** Game module; chess is the first.
 - ✅ Self-describing seeds (base64url, UTF-8-safe) that route to a game module.
-- ⛔ **Transport not wired** — the DM-vs-public-thread fork is still open, so the
-  Twitter-DOM layer is stubbed behind `Transport` in `src/content.js`.
+- ✅ **Transport decided: public threaded replies.** One move = one tweet; the
+  reply chain *is* the move list. The pure protocol (tweet ↔ move) and thread
+  reconstruction (replay move texts → State, with cheat/desync detection) are
+  implemented and tested under `src/transport/`.
+- ⛔ **Live-X DOM layer stubbed** — `Gage.threadTransport`
+  (`src/transport/thread-dom.js`) still needs the X selectors filled in (reply
+  composer, send button, tweet nodes/ids, conversation container, new-reply
+  observer). Its header lists exactly what to wire.
 
 ## Game module interface
 
@@ -47,6 +53,10 @@ implements. Squares are algebraic strings ("e2") consistently. Full contract and
 - `legalMovesFrom(state, sq) -> Square[]`
 - `applyMove(state, from, to, opts?) -> State | null` (null if illegal)
 - `moveText(state, from, to) -> string` (human label, e.g. SAN "Nf3")
+- `applyMoveText(state, text) -> State | null` (optional; inverse of `moveText` —
+  apply a human move token, null if unparseable/illegal. Transport entry point:
+  the thread carries move *text*, and this rebuilds a State identical to the
+  `applyMove` path.)
 - `terminal(state) -> { over, result?: "w"|"b"|"draw" }`
 - `squareAt(row, col) -> Square` (optional; renderer falls back to `"col,row"`)
 - `isCapture(state, from, to) -> boolean` (optional; flags captures the renderer
@@ -74,17 +84,41 @@ Loaded in dependency order by the manifest:
 - `src/games/chess.js` — chess **Game module** (pure); wraps chess.js.
 - `src/board.js` — generic grid-game renderer + click-to-move (pure, no game logic).
 - `src/seed.js` — self-describing state ↔ base64url seed; routes to a game module.
-- `src/content.js` — mounts the panel; **`Transport` stub** for the pending fork.
+- `src/transport/protocol.js` — pure tweet ↔ move codec (`Gage.protocol`); exact
+  tweet grammar in its header.
+- `src/transport/reconstruct.js` — replay parsed move texts into a State
+  (`Gage.reconstruct`); reports the first illegal move as desync/cheat.
+- `src/transport/thread-dom.js` — DOM-coupled X layer (`Gage.threadTransport`),
+  **stubbed**; header lists the exact live-X selectors to wire.
+- `src/content.js` — mounts the panel; binds the transport modules (local
+  practice board works today; live thread hook marked for when selectors land).
 - `src/styles.css` — panel + board styling.
 
 Content scripts are classic scripts (not ES modules) sharing a `window.Gage`
 namespace via IIFEs; the manifest loads them in order.
 
+## Transport — public threaded replies
+
+Moves ride the thread, not a seed: a full seed won't fit in ~280 chars, so state
+is reconstructed by **walking the reply chain**. One move = one tweet, detected
+by the `#gage` marker; the move token lives in a `[...]` slot so it survives
+surrounding human text. The **root** tweet is a challenge that declares the game
+and carries move 1; each **reply** carries exactly one move.
+
+    Challenge (root):  ♟ Chess challenge @rival — your move. #gage #chess [e4]
+    Reply:             [Nf6] #gage
+
+`Gage.reconstruct(game, moveTexts)` replays the parsed tokens through the module;
+the first token that won't apply (illegal/unparseable in its position) stops the
+walk and is returned in `error` — that is the desync / cheat signal. Full grammar
+is in `src/transport/protocol.js`.
+
 ## Next
 
-1. **Decide transport:** moves in DMs (private, matches no-sprawl) vs public
-   threaded replies (extension reads tweet ID, renders board in-place). Implement
-   `Transport` accordingly.
+1. **Wire the live-X DOM layer:** fill the selectors in
+   `src/transport/thread-dom.js` (`Gage.threadTransport`) so `readThreadMoves`,
+   `postReply`, and `observe` drive the real X page, then flip on the marked hook
+   in `src/content.js`.
 2. **More games:** add `src/games/checkers.js`, `src/games/reversi.js` behind the
    same interface — no renderer changes.
 3. **Promotion UI:** the renderer defaults promotions to a queen; add a chooser.

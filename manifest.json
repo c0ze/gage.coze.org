@@ -12,6 +12,9 @@
         "src/games/chess.js",
         "src/board.js",
         "src/seed.js",
+        "src/transport/protocol.js",
+        "src/transport/reconstruct.js",
+        "src/transport/thread-dom.js",
         "src/content.js"
       ],
       "css": ["src/styles.css"],

@@ -32,6 +32,13 @@
 //   moveText(state, from, to) -> string          human label (chess: SAN "Nf3"),
 //       computed against `state` (the position BEFORE the move).
 //
+//   applyMoveText(state, text) -> State | null    OPTIONAL. Inverse of moveText:
+//       apply a human move token (chess: SAN "Nf3") and return the NEXT state, or
+//       null if the text is unparseable/illegal in `state`. This is the transport
+//       entry point — the thread carries move TEXT, not from/to — and MUST produce
+//       a State identical to the from/to path (applyMove) for the same move, so a
+//       game rebuilt from a reply chain equals one built by clicking.
+//
 //   terminal(state)           -> { over: boolean, result?: "w"|"b"|"draw" }
 //
 //   squareAt(row, col)        -> Square           OPTIONAL. Maps a view cell to
@@ -149,6 +156,31 @@
     }
   }
 
+  // Inverse of moveText: apply a SAN token (e.g. "Nf3", "exd6", "O-O", "e8=Q")
+  // and return the next State, or null if unparseable/illegal in `state`. This is
+  // how the transport replays a thread (which carries move TEXT, not from/to).
+  // chess.js parses SAN natively and throws on illegal input. We record the SAME
+  // { from, to, promotion? } shape as applyMove — read off chess.js's returned
+  // move object — so a State rebuilt via applyMoveText is byte-identical to one
+  // built via applyMove for the same move sequence.
+  function applyMoveText(state, text) {
+    if (typeof text !== "string" || !text.trim()) return null;
+    const c = engine(state);
+    // Same "no moves after game over" guard as applyMove: chess.js still
+    // generates legal moves after draws by rule, so enforce termination here.
+    if (c.isGameOver()) return null;
+    let mv;
+    try {
+      mv = c.move(text.trim());
+    } catch (e) {
+      return null; // chess.js throws on illegal / unparseable SAN
+    }
+    if (!mv) return null;
+    const move = { from: mv.from, to: mv.to };
+    if (mv.promotion) move.promotion = mv.promotion; // only record real promotions
+    return { game: ID, moves: ((state && state.moves) || []).concat([move]) };
+  }
+
   function terminal(state) {
     const c = engine(state);
     if (!c.isGameOver()) return { over: false };
@@ -183,6 +215,7 @@
     legalMovesFrom,
     applyMove,
     moveText,
+    applyMoveText,
     terminal,
     squareAt,
     isCapture,
