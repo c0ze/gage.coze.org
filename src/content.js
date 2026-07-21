@@ -16,6 +16,15 @@
 (function () {
   const Gage = window.Gage || {};
 
+  // ---- panel visibility state -------------------------------------------
+  // The panel shows ONLY on a Gage (#gage) game thread. There the player can
+  // minimize it (collapse to the header) or close it (hide -> a small launcher
+  // pill re-opens it). Collapsed/dismissed persist across re-renders on the SAME
+  // thread and reset on navigation, so loading a new #gage tweet pops it up.
+  let panelActive = false; // currently on a #gage game thread?
+  let uiCollapsed = false; // minimized to header only
+  let uiDismissed = false; // closed by the user (panel hidden, launcher shown)
+
   // ---- small DOM helpers ------------------------------------------------
   function el(id) {
     return document.getElementById(id);
@@ -30,17 +39,69 @@
     return m;
   }
 
-  // Build the panel shell once. Returns false if it already exists.
+  // Build the panel shell + the re-open launcher once. Returns false if the
+  // panel already exists.
   function ensurePanel() {
     if (el("gage-panel")) return false;
     const panel = document.createElement("div");
     panel.id = "gage-panel";
     panel.innerHTML =
-      '<div class="gage-head">♟ Gage <span class="gage-tag">dev</span></div>' +
-      '<div id="gage-mount"></div>' +
-      '<div id="gage-status" class="gage-status">…</div>';
+      '<div class="gage-head">' +
+        '<span class="gage-title">♟ Gage <span class="gage-tag">dev</span></span>' +
+        '<span class="gage-ctrls">' +
+          '<button id="gage-min" class="gage-btn" type="button" title="Minimize" aria-label="Minimize">–</button>' +
+          '<button id="gage-close" class="gage-btn" type="button" title="Close" aria-label="Close">×</button>' +
+        '</span>' +
+      '</div>' +
+      '<div id="gage-body">' +
+        '<div id="gage-mount"></div>' +
+        '<div id="gage-status" class="gage-status">…</div>' +
+      '</div>';
     document.body.appendChild(panel);
+    el("gage-min").addEventListener("click", function () {
+      uiCollapsed = !uiCollapsed;
+      applyUiState();
+    });
+    el("gage-close").addEventListener("click", function () {
+      uiDismissed = true;
+      applyUiState();
+    });
+
+    // Small floating pill to re-open a closed panel (shown only while a game
+    // thread is active and the panel has been dismissed).
+    const launcher = document.createElement("button");
+    launcher.id = "gage-launcher";
+    launcher.type = "button";
+    launcher.textContent = "♟";
+    launcher.title = "Open Gage";
+    launcher.addEventListener("click", function () {
+      uiDismissed = false;
+      uiCollapsed = false;
+      applyUiState();
+    });
+    document.body.appendChild(launcher);
     return true;
+  }
+
+  // Reflect (panelActive, uiCollapsed, uiDismissed) onto the panel + launcher.
+  function applyUiState() {
+    const panel = el("gage-panel");
+    const launcher = el("gage-launcher");
+    if (!panel || !launcher) return;
+    if (!panelActive) {
+      // Not a game thread: nothing shows.
+      panel.style.display = "none";
+      launcher.style.display = "none";
+      return;
+    }
+    if (uiDismissed) {
+      panel.style.display = "none";
+      launcher.style.display = "";
+    } else {
+      panel.style.display = "";
+      launcher.style.display = "none";
+      panel.classList.toggle("gage-collapsed", uiCollapsed);
+    }
   }
 
   // Read the live identity + thread once. Isolated so orchestration stays pure:
@@ -151,12 +212,12 @@
     }
   }
 
-  // refresh(): read the live page, decide the mode, and (re)render. Idempotent
-  // and safe to call repeatedly — invoked on first mount, on X SPA navigation, on
-  // each new reply (observer), and to restore authoritative state after a failed
-  // post. setupGame/setupPractice each tear down the prior observer, so re-entry
-  // can't leak and a non-game result cleanly REPLACES a stale board (rather than
-  // leaving it clickable).
+  // refresh(): read the live page, decide, and (re)render. Idempotent and safe to
+  // call repeatedly — invoked on first mount, on X SPA navigation, on each new
+  // reply (observer), and to restore authoritative state after a failed post. On
+  // a #gage game thread it renders + observes and shows the panel (respecting
+  // minimize/close); off a game thread it stops observing and HIDES the panel —
+  // there is no always-on practice board.
   function refresh() {
     const ctx = readContext();
     const decision =
@@ -164,29 +225,14 @@
         ? Gage.orchestration.decide(ctx.rawTexts, { me: ctx.me, rootAuthor: ctx.rootAuthor })
         : { isGame: false };
     if (decision.isGame && Gage.games[decision.gameId]) {
-      setupGame(decision);
+      panelActive = true;
+      setupGame(decision); // render + observe (into the panel, even while hidden)
+      applyUiState();
     } else {
-      setupPractice();
+      panelActive = false;
+      teardownObserver();
+      applyUiState(); // hide the panel + launcher
     }
-  }
-
-  // ---- PRACTICE MODE (legacy local board vs self) -----------------------
-  function setupPractice() {
-    teardownObserver();
-    const game = Gage.games.chess;
-    const mount = clearMount();
-    if (!mount) return;
-    mount.style.pointerEvents = "auto";
-    setStatus("practice — click a piece, then a square (no game thread here)");
-
-    Gage.renderGame(game, game.initialState(), mount, function (mv) {
-      const label = mv.text || mv.from + "→" + mv.to;
-      const term = game.terminal(mv.state);
-      const suffix = term.over
-        ? "  · " + (term.result === "draw" ? "draw" : term.result + " wins")
-        : "";
-      setStatus(label + "  seed:" + mv.seed.slice(0, 24) + "…" + suffix);
-    });
   }
 
   // ---- entry ------------------------------------------------------------
@@ -214,6 +260,9 @@
     setInterval(function () {
       if (location.href !== lastHref) {
         lastHref = location.href;
+        // New thread: a fresh #gage game pops up (reset minimize/close).
+        uiDismissed = false;
+        uiCollapsed = false;
         settle();
       }
     }, 500);

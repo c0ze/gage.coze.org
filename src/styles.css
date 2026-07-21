@@ -17,7 +17,58 @@
   margin-bottom: 8px;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 6px;
+}
+.gage-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.gage-ctrls {
+  display: flex;
+  gap: 2px;
+}
+.gage-btn {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #8b98a5;
+  font: inherit;
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+}
+.gage-btn:hover {
+  background: #22303c;
+  color: #e7e9ea;
+}
+/* Minimized: keep only the header row. */
+#gage-panel.gage-collapsed #gage-body {
+  display: none;
+}
+/* Re-open pill for a closed panel. */
+#gage-launcher {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 99999;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  border: 1px solid #38444d;
+  background: #15202b;
+  color: #e7e9ea;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+}
+#gage-launcher:hover {
+  background: #1d2733;
 }
 .gage-tag {
   font-size: 10px;
