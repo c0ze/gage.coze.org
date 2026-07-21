@@ -149,6 +149,15 @@
     editor.focus();
     // DraftJS ignores .value/textContent; execCommand dispatches the beforeinput
     // that makes DraftJS update its model. Verified on live X 2026-07-22.
+    //
+    // CLEAR-THEN-INSERT: X persists an unsent draft in the reply composer, so a
+    // bare insertText APPENDS our move onto whatever was already there (a
+    // half-typed reply, or our own text from a prior open that wasn't sent) —
+    // the "doubled / crowded reply" bug. selectAll first so the insert REPLACES
+    // the composer's contents; on an empty composer selectAll is a no-op and this
+    // just inserts. (selectAll only moves the selection; it's insertText that
+    // fires the beforeinput DraftJS updates from, replacing whatever is selected.)
+    document.execCommand("selectAll", false, null);
     document.execCommand("insertText", false, String(text));
 
     const send = await waitFor(() => {
