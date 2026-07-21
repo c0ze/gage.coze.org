@@ -1,3 +1,8 @@
 node_modules/
 *.log
 .DS_Store
+
+# Landing-site build output: the shared core copied from src/ by site/build.sh.
+# Regenerated locally and in CI (see .github/workflows/deploy-pages.yml), so it
+# must never be committed — no duplicated source in the repo.
+site/lib/

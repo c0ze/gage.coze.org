@@ -1,0 +1,514 @@
+/* Gage — landing site styles, layered on top of the copied core lib/styles.css.
+ *
+ * Brand: "Gage" = the glove/pledge thrown down as a challenge — a formal duel.
+ * Dark, heraldic-but-modern, one confident accent (deep crimson) with a touch of
+ * gold on the wordmark. System-font stack only (self-contained: NO web fonts,
+ * NO CDNs, NO network at runtime). Mobile-first; the body never scrolls
+ * horizontally and the board fits small screens.
+ *
+ * NOTE ON THE CORE BOARD CSS: lib/styles.css targets the extension panel and
+ * pins .gage-board / #gage-panel to a fixed 316px. We override .gage-board here
+ * (see "Board — fluid override") so it is responsive on the site. We do NOT edit
+ * the copied file; we win by specificity/source order (this file loads after it).
+ */
+
+:root {
+  --bg: #0d0b0c;            /* near-black, faintly warm */
+  --bg-2: #141012;         /* raised surface */
+  --panel: #171214;        /* card surface */
+  --ink: #ece7e3;          /* primary text (warm parchment white) */
+  --ink-dim: #a99f98;      /* secondary text */
+  --ink-faint: #726a66;    /* tertiary / captions */
+  --crimson: #a01a2b;      /* heraldic accent */
+  --crimson-bright: #c8253b;
+  --crimson-deep: #6e1220;
+  --gold: #c9a24b;         /* restrained heraldic gold (wordmark detail) */
+  --line: #2a2124;         /* hairline borders */
+  --line-strong: #3a2e31;
+  --ok: #6fae7a;           /* "chosen" affirmations */
+
+  --board-max: 384px;      /* board cap on larger screens */
+  --radius: 12px;
+  --serif: Georgia, "Iowan Old Style", "Palatino Linotype", "Times New Roman", serif;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+/* ------------------------------------------------------------------ reset-ish */
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  overflow-x: hidden;      /* the body must NEVER scroll horizontally */
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  /* Atmosphere: a faint chessboard weave + a crimson glow bleeding from top. */
+  background-image:
+    radial-gradient(1200px 520px at 50% -8%, rgba(160, 26, 43, 0.20), transparent 70%),
+    radial-gradient(900px 600px at 100% 0%, rgba(201, 162, 75, 0.06), transparent 60%),
+    repeating-conic-gradient(
+      from 0deg,
+      rgba(255, 255, 255, 0.014) 0deg 90deg,
+      transparent 90deg 180deg
+    );
+  background-size: auto, auto, 44px 44px;
+  background-attachment: fixed, fixed, fixed;
+}
+
+a { color: var(--crimson-bright); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+img, svg { max-width: 100%; }
+
+/* --------------------------------------------------------------------- layout */
+.wrap {
+  width: 100%;
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 0 20px;
+}
+
+/* ---------------------------------------------------------------------- header */
+.site-head {
+  position: relative;
+  padding-top: 28px;
+}
+.brandline {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--ink-dim);
+  font-size: 12px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+}
+.brandline::before {
+  /* heraldic band — a thrown gauntlet's ribbon */
+  content: "";
+  width: 34px;
+  height: 2px;
+  background: linear-gradient(90deg, var(--crimson), var(--gold));
+}
+
+/* ------------------------------------------------------------------------ hero */
+.hero {
+  position: relative;
+  padding: 40px 0 30px;
+  text-align: center;
+}
+.crest {
+  font-size: 46px;
+  line-height: 1;
+  margin-bottom: 10px;
+  filter: drop-shadow(0 4px 10px rgba(160, 26, 43, 0.45));
+  animation: rise 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.wordmark {
+  font-family: var(--serif);
+  font-weight: 700;
+  font-size: clamp(3.2rem, 15vw, 6rem);
+  line-height: 0.92;
+  letter-spacing: 0.01em;
+  margin: 0;
+  background: linear-gradient(180deg, var(--ink) 0%, #cbb68e 60%, var(--gold) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.4);
+  animation: rise 0.7s 0.05s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.tagline {
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: clamp(1.05rem, 4.4vw, 1.5rem);
+  color: var(--ink);
+  margin: 14px 0 6px;
+  animation: rise 0.7s 0.1s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.subtag {
+  color: var(--ink-dim);
+  max-width: 46ch;
+  margin: 0 auto;
+  font-size: 0.98rem;
+  animation: rise 0.7s 0.15s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.subtag .accent { color: var(--gold); }
+
+/* -------------------------------------------------------------------- duel card */
+.duel {
+  position: relative;
+  margin: 26px 0 8px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 40%),
+    var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.03) inset,
+    0 24px 60px -30px rgba(0, 0, 0, 0.9);
+  overflow: hidden;
+  animation: rise 0.7s 0.2s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.duel::before {
+  /* crimson spine down the left edge — the heraldic stripe */
+  content: "";
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 4px;
+  background: linear-gradient(180deg, var(--crimson-bright), var(--crimson-deep));
+}
+.duel-inner { padding: clamp(18px, 5vw, 30px); }
+
+/* numbered steps */
+.step { padding: 18px 0; border-top: 1px solid var(--line); }
+.step:first-of-type { border-top: 0; padding-top: 4px; }
+.step-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.step-no {
+  font-family: var(--serif);
+  font-size: 0.8rem;
+  color: var(--crimson-bright);
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  width: 26px; height: 26px;
+  min-width: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  letter-spacing: 0;
+}
+.step-title {
+  font-family: var(--serif);
+  font-size: 1.15rem;
+  color: var(--ink);
+  margin: 0;
+  line-height: 1.3;
+}
+.step-hint { color: var(--ink-faint); font-size: 0.85rem; margin: 4px 0 0; }
+
+/* choice chips (game / platform) */
+.choices { display: flex; flex-wrap: wrap; gap: 10px; }
+.chip {
+  appearance: none;
+  font: inherit;
+  color: var(--ink);
+  background: var(--bg-2);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  padding: 12px 16px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  transition: border-color 0.18s ease, background 0.18s ease, transform 0.08s ease;
+  position: relative;
+}
+.chip .ico { font-size: 1.1rem; line-height: 1; }
+.chip:hover:not(:disabled):not(.is-active) { border-color: var(--crimson); }
+.chip:active:not(:disabled) { transform: translateY(1px); }
+.chip.is-active {
+  border-color: var(--crimson-bright);
+  background: linear-gradient(180deg, rgba(160, 26, 43, 0.22), rgba(160, 26, 43, 0.10));
+  box-shadow: 0 0 0 1px var(--crimson-bright) inset, 0 6px 20px -12px var(--crimson-bright);
+}
+.chip:disabled {
+  cursor: not-allowed;
+  color: var(--ink-faint);
+  opacity: 0.6;
+  border-style: dashed;
+}
+.soon {
+  font-size: 0.62rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  padding: 2px 6px;
+  margin-left: 2px;
+}
+
+/* rival handle input */
+.handle-field { position: relative; display: flex; align-items: center; }
+.handle-at {
+  position: absolute;
+  left: 14px;
+  color: var(--ink-faint);
+  font-size: 1.05rem;
+  pointer-events: none;
+}
+#rival {
+  width: 100%;
+  font: inherit;
+  font-size: 1.05rem;
+  color: var(--ink);
+  background: var(--bg-2);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  padding: 13px 14px 13px 34px;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+#rival::placeholder { color: var(--ink-faint); }
+#rival:focus {
+  outline: none;
+  border-color: var(--crimson-bright);
+  box-shadow: 0 0 0 3px rgba(160, 26, 43, 0.25);
+}
+
+/* board stage */
+.board-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+/* Board — fluid override of the core's fixed 316px so it fits any screen. */
+.board-frame {
+  width: 100%;
+  max-width: var(--board-max);
+  position: relative;
+  padding: 8px;
+  background:
+    linear-gradient(180deg, rgba(201, 162, 75, 0.10), transparent 60%),
+    var(--bg-2);
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  box-shadow: 0 20px 50px -28px rgba(0, 0, 0, 0.9);
+}
+.board-frame .gage-board {
+  width: 100% !important;
+  height: auto !important;
+  aspect-ratio: 1 / 1;    /* keep it square as it scales down */
+  border-radius: 8px;
+}
+.board-frame .gage-sq {
+  /* core pins 30px; scale glyphs to the fluid cell instead */
+  font-size: clamp(20px, 8.2vw, 40px) !important;
+}
+/* Locked state: board is committed to the opening — no more input. */
+.board-frame.is-locked { opacity: 0.96; }
+.board-frame.is-locked .gage-board { pointer-events: none; }
+.board-frame.is-locked::after {
+  content: "◆ opening set";
+  position: absolute;
+  top: 12px; right: 12px;
+  font-size: 0.62rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--gold);
+  background: rgba(13, 11, 12, 0.72);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  padding: 3px 9px;
+  pointer-events: none;
+}
+
+.board-caption {
+  min-height: 1.5em;
+  text-align: center;
+  color: var(--ink-dim);
+  font-size: 0.95rem;
+}
+.board-caption .move {
+  font-family: var(--serif);
+  font-weight: 700;
+  color: var(--ok);
+  font-size: 1.15rem;
+  letter-spacing: 0.02em;
+}
+.link-btn {
+  appearance: none;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--crimson-bright);
+  cursor: pointer;
+  padding: 0 2px;
+  text-decoration: underline;
+}
+.link-btn:hover { color: var(--gold); }
+
+/* --------------------------------------------------------------- challenge CTA */
+.cast {
+  margin-top: 22px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+}
+.throw {
+  appearance: none;
+  width: 100%;
+  font-family: var(--serif);
+  font-weight: 700;
+  font-size: 1.2rem;
+  letter-spacing: 0.03em;
+  color: #fdefe0;
+  background: linear-gradient(180deg, var(--crimson-bright), var(--crimson-deep));
+  border: 1px solid var(--crimson-bright);
+  border-radius: 12px;
+  padding: 16px 20px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  transition: transform 0.08s ease, box-shadow 0.2s ease, filter 0.2s ease;
+  box-shadow: 0 14px 34px -16px rgba(200, 37, 59, 0.8);
+}
+.throw .glove { font-size: 1.3rem; transition: transform 0.25s ease; }
+.throw:hover:not(:disabled) { box-shadow: 0 18px 44px -14px rgba(200, 37, 59, 0.95); }
+.throw:hover:not(:disabled) .glove { transform: rotate(-18deg) translateY(-2px); }
+.throw:active:not(:disabled) { transform: translateY(1px); }
+.throw:disabled {
+  cursor: not-allowed;
+  filter: grayscale(0.7) brightness(0.7);
+  box-shadow: none;
+  color: var(--ink-dim);
+}
+.cast-note {
+  text-align: center;
+  color: var(--ink-faint);
+  font-size: 0.82rem;
+  margin: 12px 0 0;
+  min-height: 1.2em;
+}
+.cast-note.warn { color: var(--crimson-bright); }
+
+/* preview of the exact post text */
+.preview {
+  margin-top: 14px;
+  background: var(--bg);
+  border: 1px dashed var(--line-strong);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+.preview-label {
+  font-size: 0.68rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin: 0 0 6px;
+}
+.preview-text {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.9rem;
+  color: var(--ink);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.preview-text .mk { color: var(--crimson-bright); }
+.preview-text .mv { color: var(--gold); }
+
+/* ------------------------------------------------------------------- install */
+.install {
+  margin: 40px 0 20px;
+  scroll-margin-top: 20px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: clamp(20px, 5vw, 30px);
+}
+.install h2 {
+  font-family: var(--serif);
+  font-size: 1.5rem;
+  margin: 0 0 6px;
+  color: var(--ink);
+}
+.install .lede { color: var(--ink-dim); margin: 0 0 18px; }
+.steps-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: inst;
+  display: grid;
+  gap: 12px;
+}
+.steps-list li {
+  counter-increment: inst;
+  position: relative;
+  padding-left: 40px;
+  color: var(--ink);
+}
+.steps-list li::before {
+  content: counter(inst);
+  position: absolute;
+  left: 0; top: -2px;
+  width: 26px; height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--serif);
+  font-size: 0.85rem;
+  color: var(--gold);
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+}
+.steps-list code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.86em;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 1px 6px;
+}
+.both-note {
+  margin-top: 20px;
+  padding: 14px 16px;
+  border-left: 3px solid var(--crimson);
+  background: rgba(160, 26, 43, 0.08);
+  border-radius: 0 8px 8px 0;
+  color: var(--ink);
+  font-size: 0.95rem;
+}
+.ghlink {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  font-family: var(--serif);
+  font-size: 1rem;
+  color: var(--gold);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  padding: 10px 16px;
+  transition: border-color 0.18s ease, background 0.18s ease;
+}
+.ghlink:hover { border-color: var(--gold); background: rgba(201, 162, 75, 0.08); text-decoration: none; }
+
+/* --------------------------------------------------------------------- footer */
+.site-foot {
+  text-align: center;
+  color: var(--ink-faint);
+  font-size: 0.82rem;
+  padding: 30px 0 40px;
+  border-top: 1px solid var(--line);
+  margin-top: 20px;
+}
+.site-foot .sep { margin: 0 8px; opacity: 0.5; }
+
+/* ----------------------------------------------------------------- animations */
+@keyframes rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+
+/* ------------------------------------------------------------------ responsive */
+@media (min-width: 620px) {
+  .choices .chip { padding: 13px 18px; }
+  .board-frame { padding: 10px; }
+}

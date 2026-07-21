@@ -1,0 +1,51 @@
+name: Deploy landing site to GitHub Pages
+
+# Publishes site/ to GitHub Pages. The site reuses the extension's core: the
+# build step copies the shared modules from src/ into site/lib/ (which is
+# gitignored — no committed duplication), then the whole site/ folder is
+# uploaded as the Pages artifact. site/CNAME carries the custom domain.
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+# Least-privilege token; Pages needs pages:write + id-token:write to deploy.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Serialize deploys; don't cancel an in-progress one (avoids half-published sites).
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build site/lib (copy shared core from src/)
+        run: sh site/build.sh
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload site/ as the Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
