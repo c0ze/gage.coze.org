@@ -35,10 +35,12 @@ mobile PWA. Rendering is a separate, client-side concern.
   reply chain *is* the move list. The pure protocol (tweet ↔ move) and thread
   reconstruction (replay move texts → State, with cheat/desync detection) are
   implemented and tested under `src/transport/`.
-- ⛔ **Live-X DOM layer stubbed** — `Gage.threadTransport`
-  (`src/transport/thread-dom.js`) still needs the X selectors filled in (reply
-  composer, send button, tweet nodes/ids, conversation container, new-reply
-  observer). Its header lists exactly what to wire.
+- ✅ **Live-X DOM layer wired** — `Gage.threadTransport`
+  (`src/transport/thread-dom.js`) reads the thread, fills the reply composer
+  (DraftJS via `execCommand("insertText")`), and observes new replies, using
+  selectors **verified against live X on 2026-07-22**. Dev-safe: `AUTO_SEND` is
+  off, so it fills a reply but the player presses "Reply" — nothing posts
+  unattended. (X's data-testids will drift; the file header says how to re-verify.)
 
 ## Game module interface
 
@@ -89,9 +91,11 @@ Loaded in dependency order by the manifest:
 - `src/transport/reconstruct.js` — replay parsed move texts into a State
   (`Gage.reconstruct`); reports the first illegal move as desync/cheat.
 - `src/transport/thread-dom.js` — DOM-coupled X layer (`Gage.threadTransport`),
-  **stubbed**; header lists the exact live-X selectors to wire.
+  **wired** against live X (2026-07-22); header lists the selectors + how to
+  re-verify when they drift.
 - `src/content.js` — mounts the panel; binds the transport modules (local
-  practice board works today; live thread hook marked for when selectors land).
+  practice board works today; the live thread hook is present but commented until
+  the game orchestration is finished).
 - `src/styles.css` — panel + board styling.
 
 Content scripts are classic scripts (not ES modules) sharing a `window.Gage`
@@ -115,10 +119,10 @@ is in `src/transport/protocol.js`.
 
 ## Next
 
-1. **Wire the live-X DOM layer:** fill the selectors in
-   `src/transport/thread-dom.js` (`Gage.threadTransport`) so `readThreadMoves`,
-   `postReply`, and `observe` drive the real X page, then flip on the marked hook
-   in `src/content.js`.
+1. **Finish the game orchestration:** the DOM layer is wired, so what's left is
+   flipping on the `src/content.js` hook — new-game detection (challenge vs
+   reply), the rival's @handle, hydrating from a conversation page, and an
+   end-to-end smoke test (then flip `AUTO_SEND` on in `thread-dom.js`).
 2. **More games:** add `src/games/checkers.js`, `src/games/reversi.js` behind the
    same interface — no renderer changes.
 3. **Promotion UI:** the renderer defaults promotions to a queen; add a chooser.

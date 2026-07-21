@@ -1,105 +1,172 @@
 // DOM-coupled transport for X (Twitter). window.Gage.threadTransport.
 //
-// This is the ONLY Gage file that touches the live X page. Everything below is
-// STUBBED because this dev environment has no X: each method returns a safe
-// default and console.warn()s that it is unwired. Pairs with the pure layers:
-//   protocol.js    parses/builds tweet text (formatMove / parseMove)
-//   reconstruct.js replays parsed move texts into a State
-// This layer's whole job is (a) pull ordered tweet TEXTS out of the DOM and
-// (b) push a reply into the composer. It parses/replays NOTHING itself.
+// The ONLY Gage file that touches the live X page. Selectors below were VERIFIED
+// against live logged-in desktop X on 2026-07-22. X ships no stable API here —
+// these are reverse-engineered data-testids and WILL rot; if moves stop flowing,
+// re-verify each against the live DOM (see VERIFIED SELECTORS).
 //
-// ============================================================================
-// LIVE-X WIRING CHECKLIST  — a follow-up session must fill in EXACTLY these.
-// X ships no stable API here; selectors are DOM-reverse-engineered and rot, so
-// each is called out with what it must resolve to. (Current as an inventory of
-// intent, not verified selectors — verify against the live DOM when wiring.)
+// VERIFIED SELECTORS
+//  [1] Thread container / observer root: div[aria-label^="Timeline:"]
+//        ("Timeline: Conversation" on a status page; "Timeline: Your Home
+//        Timeline" on home). Holds the tweet cells in DOM order, root first.
+//  [2] Tweet node: article[data-testid="tweet"] (each inside a
+//        [data-testid="cellInnerDiv"] cell). Text: [data-testid="tweetText"]
+//        .innerText (plain text; our move token is ASCII inside "[...]").
+//  [3] Status id: a[href*="/status/"] -> /status/(\d+)/. Identity + dedupe.
+//  [4] Reply composer editable: [data-testid="tweetTextarea_0"] (DraftJS
+//        contenteditable; .value / textContent are inert). Fill via focus() +
+//        document.execCommand("insertText", false, text) — verified working.
+//  [5] Send button: [data-testid="tweetButtonInline"] (labeled "Reply");
+//        aria-disabled="true" until the editor has text, then it can be clicked.
+//  [6] Open a reply scoped to a tweet: click that article's
+//        [data-testid="reply"]. Cancel without posting: [data-testid=
+//        "app-bar-close"] then the "Discard" confirmation.
+//  [7] Incoming replies: MutationObserver on [1] (childList+subtree) for added
+//        article[data-testid="tweet"]; dedupe by [3].
 //
-//  [1] CONVERSATION CONTAINER  (for readThreadMoves + observe root)
-//      The scroll region holding the thread's tweets in order. Today X marks
-//      cells with:  article[data-testid="tweet"]  living under a timeline
-//      section (e.g. [aria-label*="Timeline"] / [role="region"]). Need: the
-//      nearest stable ancestor of the tweet articles to scope queries + observe.
+// CONTRACT: readThreadMoves() returns RAW tweet texts in thread order; the caller
+// (content.js) parses them via Gage.protocol.parseMove. postReply(text) fills the
+// reply composer and, only if AUTO_SEND, clicks send — default OFF so a dev build
+// never posts to X without the player pressing "Reply" themselves.
 //
-//  [2] TWEET / ARTICLE NODES  (ordered move source for readThreadMoves)
-//      Each tweet:  article[data-testid="tweet"].
-//      Text body:   [data-testid="tweetText"]  (concatenate its text nodes;
-//      emoji are <img alt="♟">, so read alt text too). DOM order == thread
-//      order top-down (root first) — do NOT re-sort by timestamp (equal-second
-//      replies would scramble). Return each tweet's RAW text in that order; the
-//      caller (content.js) parses via Gage.protocol.parseMove and drops non-moves.
-//
-//  [3] TWEET PERMALINK / ID  (identity + reply targeting)
-//      Status id lives in the permalink:  a[href*="/status/"] time  ->
-//      closest("a").href matches m|/status/(\d+)|. Need it to (a) know the
-//      LATEST tweet in the thread (reply target) and (b) dedupe in observe().
-//
-//  [4] REPLY COMPOSER — EDITABLE ELEMENT  (for postReply)
-//      X uses a DraftJS contentEditable, not a <textarea>:
-//        div[data-testid="tweetTextarea_0"]  (role="textbox", contenteditable).
-//      Setting .value does nothing. To prefill: focus it, then insert text via
-//      the clipboard paste path or document.execCommand("insertText", ...), or
-//      dispatch a beforeinput/input InputEvent with inputType "insertText" so
-//      DraftJS updates its model. Confirm the composer is the INLINE reply box
-//      under the target tweet (open it by clicking [data-testid="reply"]).
-//
-//  [5] SEND / REPLY BUTTON  (submit in postReply)
-//      Inline reply button:  [data-testid="tweetButtonInline"]
-//      Modal composer button: [data-testid="tweetButton"]
-//      Both go disabled (aria-disabled="true") until the editor has text — so
-//      prefill [4] first, then wait for enabled, then click. Keyboard fallback:
-//      Ctrl/Cmd+Enter while the editor is focused.
-//
-//  [6] REPLY-TO WIRING  (make postReply reply to the LATEST tweet, not a new top-level tweet)
-//      Click the target tweet's [data-testid="reply"] to open the inline
-//      composer scoped to it (uses [3] to pick the latest). Alternative:
-//      navigate to the compose intent for that status id. Ensure the opened
-//      composer is the one queried in [4]/[5].
-//
-//  [7] NOTIFICATION / NEW-REPLY HOOK  (for observe)
-//      A MutationObserver on [1] watching childList for added
-//      article[data-testid="tweet"] nodes; for each added node, parse via
-//      Gage.protocol.parseMove, dedupe by status id [3], and if it's a new move
-//      call onNewMove(moveText). (Optional richer source: the notifications tab
-//      / a title "(1) ..." change — but the in-thread observer is enough.)
-// ============================================================================
+// LIMITATION: readThreadMoves() only sees tweets currently in the DOM. X lazily
+// loads long conversations, so a long game may need scrolling to fully hydrate
+// before reconstruction is complete. (Fine for short games; revisit later.)
 (function () {
   const Gage = (window.Gage = window.Gage || {});
 
-  const UNWIRED = "[gage] threadTransport is unwired (no live X here): ";
-
-  // readThreadMoves() -> string[]
-  // Ordered tweet texts of the current conversation, top-down (root first). The
-  // caller runs each through Gage.protocol.parseMove and Gage.reconstruct.
-  // STUB: returns []. Wire per checklist [1][2][3].
-  function readThreadMoves() {
-    console.warn(UNWIRED + "readThreadMoves() -> [] (see checklist [1][2][3])");
-    return [];
-  }
-
-  // postReply(text) -> void
-  // Prefill X's inline reply composer (replying to the LATEST tweet in the
-  // thread) with `text` and submit. `text` comes from Gage.protocol.formatMove.
-  // STUB: no-op. Wire per checklist [4][5][6].
-  function postReply(text) {
-    // String() (not JSON.stringify) so this stub can never throw on odd inputs.
-    console.warn(
-      UNWIRED + "postReply() dropped (see checklist [4][5][6]); text was: " +
-        String(text)
-    );
-  }
-
-  // observe(onNewMove) -> void
-  // Watch the conversation for incoming replies; call onNewMove(moveText) for
-  // each new, deduped move tweet. STUB: no-op. Wire per checklist [7].
-  function observe(onNewMove) {
-    console.warn(UNWIRED + "observe() is inert (see checklist [7])");
-    // no observer attached; onNewMove will never fire in this stub.
-    void onNewMove;
-  }
-
-  Gage.threadTransport = {
-    readThreadMoves,
-    postReply,
-    observe,
+  const SEL = {
+    container: 'div[aria-label^="Timeline:"]',
+    article: 'article[data-testid="tweet"]',
+    tweetText: '[data-testid="tweetText"]',
+    statusLink: 'a[href*="/status/"]',
+    reply: '[data-testid="reply"]',
+    editor: '[data-testid="tweetTextarea_0"]',
+    send: '[data-testid="tweetButtonInline"]',
   };
+  // Dev-safe: fill the reply but let the player click "Reply". Flip to true for
+  // hands-free posting once the full game flow is trusted.
+  const AUTO_SEND = false;
+
+  const container = () => document.querySelector(SEL.container) || document.body;
+
+  function statusIdOf(article) {
+    const href = Array.from(article.querySelectorAll(SEL.statusLink))
+      .map((x) => x.getAttribute("href"))
+      .find((h) => /\/status\/\d+/.test(h || ""));
+    const m = href && href.match(/\/status\/(\d+)/);
+    return m ? m[1] : null;
+  }
+
+  function tweetTextOf(article) {
+    const el = article.querySelector(SEL.tweetText);
+    return el ? el.innerText : "";
+  }
+
+  // Poll until getter() returns truthy or we time out (X renders async).
+  function waitFor(getter, opts) {
+    const { timeout = 6000, interval = 100 } = opts || {};
+    return new Promise((resolve, reject) => {
+      const t0 = Date.now();
+      (function tick() {
+        let v = null;
+        try { v = getter(); } catch (e) { v = null; }
+        if (v) return resolve(v);
+        if (Date.now() - t0 > timeout) return reject(new Error("[gage] waitFor timed out"));
+        setTimeout(tick, interval);
+      })();
+    });
+  }
+
+  // readThreadMoves() -> string[]  RAW tweet texts, thread order (root first).
+  function readThreadMoves() {
+    return Array.from(container().querySelectorAll(SEL.article)).map(tweetTextOf);
+  }
+
+  // postReply(text) -> Promise. Opens a reply to the LATEST tweet in the thread
+  // and fills `text` into the DraftJS editor; clicks send only if AUTO_SEND.
+  // Rejects (does not swallow) so the UI can surface a failure.
+  async function postReply(text) {
+    const arts = Array.from(container().querySelectorAll(SEL.article));
+    const target = arts[arts.length - 1]; // newest tweet keeps the chain nested
+    if (!target) throw new Error("[gage] postReply: no tweet to reply to");
+    const replyBtn = target.querySelector(SEL.reply);
+    if (!replyBtn) throw new Error("[gage] postReply: no reply control on target tweet");
+    replyBtn.click();
+
+    const editor = await waitFor(() => document.querySelector(SEL.editor));
+    editor.focus();
+    // DraftJS ignores .value/textContent; execCommand dispatches the beforeinput
+    // that makes DraftJS update its model. Verified on live X 2026-07-22.
+    document.execCommand("insertText", false, String(text));
+
+    const send = await waitFor(() => {
+      const b = document.querySelector(SEL.send);
+      return b && b.getAttribute("aria-disabled") !== "true" ? b : null;
+    });
+    if (AUTO_SEND) send.click();
+    return { filled: true, sent: AUTO_SEND };
+  }
+
+  // observe(onNewMove) -> disconnect(). Fires onNewMove(rawText) once per newly
+  // added, fully-hydrated tweet (deduped by status id). X renders a tweet's
+  // article shell BEFORE its id (an <a href>) and text, and may fill them via
+  // attribute or characterData mutations, so we:
+  //   (a) tag every article present at subscribe time (a DOM expando) so it can
+  //       never be mistaken for "new" even before it hydrates or gets an id;
+  //   (b) watch childList + attributes(href) + characterData so hydration
+  //       triggers a rescan;
+  //   (c) only record/emit once an article has an id AND non-empty text — the
+  //       rest are retried on later mutations.
+  // Scans are coalesced and cancelled on disconnect so nothing fires after
+  // unsubscribe. NOTE: treat this as a "thread changed" nudge — the orchestration
+  // should re-read via readThreadMoves()+reconstruct() as the source of truth
+  // rather than trust a single emit (robust to X's node recycling).
+  function observe(onNewMove) {
+    const root = container();
+    const PRE = Symbol("gagePre"); // unique per observe() call — no cross-observer collision
+    const known = new Set();
+    for (const a of root.querySelectorAll(SEL.article)) {
+      a[PRE] = true;
+      const id = statusIdOf(a);
+      if (id) known.add(id);
+    }
+    let scheduled = false;
+    let stopped = false;
+    let timer = null;
+    function scan() {
+      scheduled = false;
+      timer = null;
+      if (stopped) return;
+      for (const a of root.querySelectorAll(SEL.article)) {
+        if (stopped) return; // caller may disconnect() from within onNewMove
+        if (a[PRE]) continue; // present at subscribe time -> never "new"
+        const id = statusIdOf(a);
+        if (!id || known.has(id)) continue;
+        const text = tweetTextOf(a);
+        if (!text) continue; // not hydrated yet — a later mutation retries
+        known.add(id);
+        try { onNewMove(text); } catch (e) { /* caller's error */ }
+      }
+    }
+    const mo = new MutationObserver(() => {
+      if (stopped || scheduled) return;
+      scheduled = true;
+      timer = setTimeout(scan, 0); // coalesce a burst of mutations into one scan
+    });
+    mo.observe(root, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["href"],
+      characterData: true,
+    });
+    return function disconnect() {
+      stopped = true;
+      mo.disconnect();
+      if (timer) { clearTimeout(timer); timer = null; }
+    };
+  }
+
+  Gage.threadTransport = { readThreadMoves, postReply, observe, SELECTORS: SEL, AUTO_SEND };
 })();
