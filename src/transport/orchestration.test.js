@@ -194,4 +194,29 @@ const reply = (san) => protocol.formatMove({ moveText: san, isChallenge: false }
   ok("mentions: author self-mention is skipped when resolving Black");
 })();
 
+// ---- 9. cross-platform handle matching (short mention vs full handle) ------
+(function crossPlatformHandles() {
+  // Bluesky: the challenge @-mentions the bare "gand-tr" but the viewer's handle
+  // (getMyHandle) is the full "gand-tr.bsky.social" — the player must still be
+  // recognized (Black), not treated as a spectator.
+  const bsky = protocol.formatMove({ gameId: "chess", moveText: "e4", opponentHandle: "gand-tr", isChallenge: true });
+  const dB = orchestration.decide([bsky], { me: "gand-tr.bsky.social", rootAuthor: "arda-karaduman.bsky.social" });
+  assert.strictEqual(dB.black, "gand-tr", "black resolves from the short mention");
+  assert.strictEqual(dB.myColor, "b", "full handle matches the short mention (Bluesky)");
+  assert.strictEqual(dB.interactive, true, "recognized player is interactive, not a spectator");
+
+  // Mastodon: the author viewing their OWN thread reads a bare local "akaraduman"
+  // while the post header shows "akaraduman@mastodon.social"; White must still match.
+  const masto = protocol.formatMove({ gameId: "chess", moveText: "e4", opponentHandle: "gandtr", isChallenge: true });
+  const dW = orchestration.decide([masto], { me: "akaraduman", rootAuthor: "akaraduman@mastodon.social" });
+  assert.strictEqual(dW.myColor, "w", "bare local handle matches the full author handle (Mastodon)");
+
+  // Safety: two DIFFERENT fully-qualified handles that merely share a local part must
+  // NOT collide — a lookalike on another instance stays a spectator.
+  const full = protocol.formatMove({ gameId: "chess", moveText: "e4", opponentHandle: "gand-tr.bsky.social", isChallenge: true });
+  const dLook = orchestration.decide([full], { me: "gand-tr.example.com", rootAuthor: "arda-karaduman.bsky.social" });
+  assert.strictEqual(dLook.myColor, null, "different qualified handles sharing a local part don't collide");
+  ok("handle matching: short mention <-> full handle across platforms, no cross-instance false match");
+})();
+
 console.log("\nAll orchestration tests passed (" + passed + " checks).");

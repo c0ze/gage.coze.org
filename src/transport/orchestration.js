@@ -64,13 +64,43 @@
 
   function firstRivalMention(rootText, rootAuthor) {
     for (const h of mentionsOf(rootText)) {
-      if (h && h !== rootAuthor) return h;
+      // Skip a mention of the AUTHOR — including a short self-mention when the read
+      // rootAuthor is a full handle (handleMatch's bare-vs-qualified rule). A
+      // genuinely different full-handle rival is NOT skipped (both-qualified => exact).
+      if (h && !handleMatch(h, rootAuthor)) return h;
     }
     return null;
   }
 
   function norm(h) {
     return h == null ? null : String(h).replace(/^@/, "").toLowerCase() || null;
+  }
+
+  // The "local part" of a handle: the label before the first "." or "@". Platforms
+  // suffix handles differently — Bluesky is "gand-tr.bsky.social", Mastodon remote
+  // is "user@instance.tld" — yet a challenge may @-mention the bare "gand-tr" while
+  // getMyHandle reads the full handle. Comparing local parts lets a short mention
+  // still identify the same player. (X handles have no suffix, so they still match
+  // exactly and are unaffected.)
+  function localPart(h) {
+    return String(h == null ? "" : h).split(/[.@]/)[0];
+  }
+  // A BARE handle has no domain/instance suffix (no "." or "@") — e.g. a short
+  // "@gand-tr" mention, as opposed to the full "gand-tr.bsky.social".
+  function isBare(h) {
+    return h.indexOf(".") === -1 && h.indexOf("@") === -1;
+  }
+  // Same person if identical, OR one side is a BARE handle whose local part matches
+  // the other's. We fall back to local-part matching ONLY when exactly one side is
+  // bare (a short mention vs a full handle); two DIFFERENT fully-qualified handles
+  // that merely share a local part ("gand-tr.bsky.social" vs "gand-tr.example.com")
+  // must NOT collide, so both-qualified requires exact equality.
+  function handleMatch(a, b) {
+    if (!a || !b) return false;
+    if (a === b) return true;
+    if (isBare(a) === isBare(b)) return false; // both bare (would be ===) or both qualified
+    const la = localPart(a);
+    return !!la && la === localPart(b);
   }
 
   function colorName(c) {
@@ -138,7 +168,7 @@
     // Sides. WHITE = root author (challenger); BLACK = first @mention in the ROOT
     // text that isn't the root author.
     const black = firstRivalMention(rootText, white);
-    const myColor = me && me === white ? "w" : me && me === black ? "b" : null;
+    const myColor = me && handleMatch(me, white) ? "w" : me && handleMatch(me, black) ? "b" : null;
 
     // Turn / termination read off the (last-good) reconstructed state.
     let turn = null;
