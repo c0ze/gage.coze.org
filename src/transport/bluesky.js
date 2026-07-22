@@ -163,10 +163,43 @@
   function postBodyEl(item) {
     const tagged = item.querySelector(SEL.postText);
     if (tagged && tagged.innerText.trim()) return tagged;
-    let best = null;
-    let bestLen = -1;
+    // Candidate blocks: div[dir="auto"] not inside a link. A QUOTED post embeds
+    // its own dir="auto" body inside the item, and the old largest-block pick
+    // let a LONGER quoted post shadow the post's own body (or inject its own
+    // "[move] #gage"). Two defenses:
+    //   (1) EXCLUDE embed subtrees: react-native-web renders the quote card as
+    //       a nested clickable region with role="link" (nested <a> is invalid
+    //       HTML, so bsky uses the ARIA role) — any block inside such a region,
+    //       strictly within the item, is the QUOTED post's text, never this
+    //       post's own body. If that exclusion would leave NO candidates (role
+    //       markup drift — or the item itself rendering as one big link row),
+    //       fall back to the unfiltered pool rather than reading nothing.
+    //   (2) Among the surviving candidates, PREFER the first (topmost) block
+    //       whose text parses as a Gage move — the post's own body precedes any
+    //       embed in DOM order. If nothing parses (chatter / image post), keep
+    //       the legacy largest-block behavior. Guarded: without Gage.protocol
+    //       we can't parse, so it's pure legacy.
+    const candidates = [];
+    const ownBody = [];
     for (const el of item.querySelectorAll('div[dir="auto"]')) {
       if (el.closest("a")) continue; // skip the author/handle/time links
+      candidates.push(el);
+      const linkRegion = el.closest('[role="link"]');
+      // Inside a role="link" region that sits strictly WITHIN the item -> the
+      // element belongs to an embedded (quoted) post, not this post's body.
+      if (linkRegion && linkRegion !== item && item.contains(linkRegion)) continue;
+      ownBody.push(el);
+    }
+    const pool = ownBody.length ? ownBody : candidates;
+    const protocol = Gage.protocol;
+    if (protocol && protocol.parseMove) {
+      for (const el of pool) {
+        if (protocol.parseMove(el.innerText || "")) return el;
+      }
+    }
+    let best = null;
+    let bestLen = -1;
+    for (const el of pool) {
       const len = (el.innerText || "").length;
       if (len > bestLen) { bestLen = len; best = el; }
     }
@@ -226,12 +259,47 @@
     return Array.from(document.querySelectorAll(SEL.item)).map(postTextOf);
   }
 
-  // postReply(text) -> Promise. Opens a reply to the LATEST post in the thread and
-  // fills `text` into the ProseMirror composer; clicks Publish only if AUTO_SEND.
-  // Rejects (does not swallow) so the UI can surface a failure.
+  // readThreadPosts() -> [{ text, author }]  same posts as readThreadMoves, plus
+  // each post's author handle (lowercased) or null when unreadable. The
+  // orchestration uses the author to accept only the right player's moves.
+  function readThreadPosts() {
+    return Array.from(document.querySelectorAll(SEL.item)).map(function (item) {
+      return { text: postTextOf(item), author: authorOf(item) };
+    });
+  }
+
+  // The reply target: the post carrying the LAST ACCEPTED move — the same
+  // authorship-gated pick the decision layer makes (orchestration.
+  // lastAcceptedMoveIndex), so an outsider's skipped "[e5] #gage" can never
+  // become the parent of the next legitimate move. Fallbacks, in order: the
+  // last post whose text merely parses as a move (orchestration not loaded),
+  // then the last post.
+  function lastGamePost(items) {
+    const orch = Gage.orchestration;
+    if (orch && orch.lastAcceptedMoveIndex) {
+      const idx = orch.lastAcceptedMoveIndex(
+        items.map(function (item) {
+          return { text: postTextOf(item), author: authorOf(item) };
+        })
+      );
+      if (idx >= 0) return items[idx];
+    }
+    const protocol = Gage.protocol;
+    if (protocol && protocol.parseMove) {
+      for (let i = items.length - 1; i >= 0; i--) {
+        if (protocol.parseMove(postTextOf(items[i]))) return items[i];
+      }
+    }
+    return items.length ? items[items.length - 1] : null;
+  }
+
+  // postReply(text) -> Promise. Opens a reply to the LAST GAME POST in the
+  // thread (fallback: latest post) and fills `text` into the ProseMirror
+  // composer; clicks Publish only if AUTO_SEND. Rejects (does not swallow) so
+  // the UI can surface a failure.
   async function postReply(text) {
     const items = Array.from(document.querySelectorAll(SEL.item));
-    const target = items[items.length - 1]; // newest post keeps the chain nested
+    const target = lastGamePost(items); // last move keeps the chain nested under the game
     if (!target) throw new Error("[gage] postReply: no post to reply to");
     const replyBtn = target.querySelector(SEL.reply);
     if (!replyBtn) throw new Error("[gage] postReply: no reply control on target post");
@@ -276,8 +344,11 @@
   //       be mistaken for "new" even before it hydrates or gets a permalink;
   //   (b) watch childList + attributes(href) + characterData so hydration triggers
   //       a rescan;
-  //   (c) only record/emit once an item has an id AND non-empty text — the rest are
-  //       retried on later mutations.
+  //   (c) only record/emit once an item has an id AND non-empty text — the rest
+  //       are retried on later mutations. (On Bluesky the author rides in the
+  //       item's own testid so it's readable from the start; for the general
+  //       late-author case, content.js schedules a bounded re-read whenever a
+  //       move-shaped post is read with a null author.)
   // Scans are coalesced and cancelled on disconnect so nothing fires after
   // unsubscribe. NOTE: treat this as a "thread changed" nudge — the orchestration
   // should re-read via readThreadMoves() as the source of truth rather than trust a
@@ -330,6 +401,7 @@
 
   Gage.transports.bluesky = {
     readThreadMoves,
+    readThreadPosts,
     postElements,
     postReply,
     observe,

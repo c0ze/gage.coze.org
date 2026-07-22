@@ -219,4 +219,287 @@ const reply = (san) => protocol.formatMove({ moveText: san, isChallenge: false }
   ok("handle matching: short mention <-> full handle across platforms, no cross-instance false match");
 })();
 
+// ---- 10. AUTHORSHIP: an outsider's move-shaped reply is SKIPPED ------------
+(function outsiderMoveSkipped() {
+  // Board after 1.e4: Black to move. An OUTSIDER posts a perfectly valid-looking
+  // "[e5] #gage" — under text-only parsing this would PLAY Black's move. With
+  // authorship it must be skipped: the position stays at 1.e4, Black to move,
+  // no desync, and the real Black player is still the one who's interactive.
+  const posts = [
+    { text: CHALLENGE, author: WHITE },
+    { text: reply("e5"), author: OUTSIDER },
+  ];
+  const d = orchestration.decide(posts, { me: BLACK, rootAuthor: WHITE });
+
+  assert.strictEqual(d.error, null, "outsider move is chatter, not a desync");
+  assert.strictEqual(d.moveCount, 1, "only the root move applied");
+  assert.strictEqual(d.turn, "b", "still Black to move");
+  assert.strictEqual(d.interactive, true, "real Black player still gets the turn");
+  ok("authorship: outsider's '[e5] #gage' is skipped, board unchanged");
+})();
+
+// ---- 11. AUTHORSHIP: same player twice in a row -> second skipped ----------
+(function doubleMoveSkipped() {
+  // White posts the root (1.e4) and then ANOTHER move without waiting: the
+  // second is out-of-turn (Black's slot) and must be skipped as chatter.
+  const posts = [
+    { text: CHALLENGE, author: WHITE },
+    { text: reply("d4"), author: WHITE }, // out of turn — Black's slot
+  ];
+  const d = orchestration.decide(posts, { me: WHITE, rootAuthor: WHITE });
+
+  assert.strictEqual(d.error, null, "out-of-turn own move isn't a desync");
+  assert.strictEqual(d.moveCount, 1, "second consecutive move not applied");
+  assert.strictEqual(d.turn, "b", "still Black's turn");
+  assert.strictEqual(d.interactive, false, "White can't act on Black's turn");
+  ok("authorship: a player's second consecutive move is skipped");
+})();
+
+// ---- 12. AUTHORSHIP: author null (unreadable) is accepted — legacy ---------
+(function nullAuthorAccepted() {
+  // Hydration gaps / legacy adapters yield author:null. Those moves must still
+  // replay so half-loaded pages and old flows keep working.
+  const posts = [
+    { text: CHALLENGE, author: WHITE },
+    { text: reply("e5"), author: null }, // unreadable — trusted
+    { text: reply("Nf3"), author: WHITE },
+  ];
+  const d = orchestration.decide(posts, { me: BLACK, rootAuthor: WHITE });
+
+  assert.strictEqual(d.error, null, "no desync with an unreadable author");
+  assert.strictEqual(d.moveCount, 3, "null-author move accepted (1.e4 e5 2.Nf3)");
+  assert.strictEqual(d.turn, "b", "back to Black after 2.Nf3");
+  ok("authorship: author:null moves are accepted (hydration-gap tolerance)");
+})();
+
+// ---- 13. AUTHORSHIP: troll bracketed chatter by an outsider ----------------
+(function trollChatterSkipped() {
+  // "[lol nice game] #gage" from a bystander used to hard-DESYNC the thread
+  // (unparseable move token stops reconstruction). With authorship it never
+  // reaches the move list; the game continues cleanly around it.
+  const posts = [
+    { text: CHALLENGE, author: WHITE },
+    { text: "[lol nice game] #gage", author: OUTSIDER },
+    { text: reply("e5"), author: BLACK },
+  ];
+  const d = orchestration.decide(posts, { me: WHITE, rootAuthor: WHITE });
+
+  assert.strictEqual(d.error, null, "troll chatter causes no desync");
+  assert.strictEqual(d.moveCount, 2, "1.e4 e5 replayed around the troll post");
+  assert.strictEqual(d.turn, "w", "White to move");
+  assert.strictEqual(d.interactive, true, "game continues for the real players");
+  ok("authorship: outsider's bracketed chatter can no longer desync the board");
+})();
+
+// ---- 14. AUTHORSHIP: short-mention vs full-handle authors still play -------
+(function shortVsFullAuthors() {
+  // Bluesky-style: the challenge mentions the bare "gand-tr", but the DOM reads
+  // the poster's FULL handle "gand-tr.bsky.social". handleMatch must bridge the
+  // two so the rightful Black's move is accepted, not skipped.
+  const root = protocol.formatMove({
+    gameId: "chess", moveText: "e4", opponentHandle: "gand-tr", isChallenge: true,
+  });
+  const posts = [
+    { text: root, author: "arda-karaduman.bsky.social" },
+    { text: reply("e5"), author: "gand-tr.bsky.social" },
+  ];
+  const d = orchestration.decide(posts, {
+    me: "arda-karaduman.bsky.social",
+    rootAuthor: "arda-karaduman.bsky.social",
+  });
+
+  assert.strictEqual(d.moveCount, 2, "full-handle author matches the short mention");
+  assert.strictEqual(d.error, null, "no desync");
+  assert.strictEqual(d.turn, "w", "White to move after 1.e4 e5");
+
+  // When the challenge mentions the FULL handle, a lookalike from another
+  // instance is rejected (both qualified -> exact match required). NOTE: a
+  // BARE mention can't pin the instance — that's handleMatch's documented
+  // trade-off for short mentions — so full-handle challenges are the strict form.
+  const fullRoot = protocol.formatMove({
+    gameId: "chess", moveText: "e4",
+    opponentHandle: "gand-tr.bsky.social", isChallenge: true,
+  });
+  const posts2 = [
+    { text: fullRoot, author: "arda-karaduman.bsky.social" },
+    { text: reply("e5"), author: "gand-tr.example.com" }, // imposter, wrong instance
+  ];
+  const d2 = orchestration.decide(posts2, {
+    me: "arda-karaduman.bsky.social",
+    rootAuthor: "arda-karaduman.bsky.social",
+  });
+  assert.strictEqual(d2.moveCount, 1, "cross-instance lookalike's move is skipped");
+  assert.strictEqual(d2.error, null, "and causes no desync");
+  ok("authorship: short/full handle forms match; qualified lookalikes are rejected");
+})();
+
+// ---- 15. AUTHORSHIP: unknown expected side can't reject (no rival read) ----
+(function unknownExpectedAccepts() {
+  // If the root resolved NO rival mention (black unknown), there is no rightful
+  // owner of the Black slots to defend — readable authors must not be rejected
+  // against a null expectation, or such threads would freeze at move 1. The
+  // first poster CLAIMS the side: the decision then names them as Black (so
+  // they get myColor/interactivity) and the identity lock keeps others out.
+  const noMentionRoot = "chess time! #gage #chess [e4]";
+  const posts = [
+    { text: noMentionRoot, author: WHITE },
+    { text: reply("e5"), author: OUTSIDER }, // black unknown -> first poster claims it
+  ];
+  const d = orchestration.decide(posts, { me: WHITE, rootAuthor: WHITE });
+  assert.strictEqual(d.moveCount, 2, "unknown expected side accepts the move");
+  assert.strictEqual(d.black, OUTSIDER, "the claimant is surfaced as Black");
+
+  // And the claimant is now a real player, not a spectator: it's White's turn
+  // here, so from the claimant's viewpoint we just check the color assignment.
+  const dc = orchestration.decide(posts, { me: OUTSIDER, rootAuthor: WHITE });
+  assert.strictEqual(dc.myColor, "b", "the claimant gets Black's seat");
+
+  // A DIFFERENT readable author can no longer take Black's next slot.
+  const posts2 = posts.concat([
+    { text: reply("Nf3"), author: WHITE },
+    { text: reply("Nc6"), author: "someone_else" }, // locked out
+  ]);
+  const d2 = orchestration.decide(posts2, { me: WHITE, rootAuthor: WHITE });
+  assert.strictEqual(d2.moveCount, 3, "post-claim, other authors are locked out");
+  ok("authorship: an unclaimed side is claimed (and locked) by its first poster");
+})();
+
+// ---- 16. legacy string[] input still fully works ---------------------------
+(function legacyStringsStillWork() {
+  // The exact call shape content.js used before readThreadPosts existed. All
+  // texts, no authors — every move-shaped post plays, including the troll's
+  // (pre-fix behavior preserved for author-less input).
+  const texts = [CHALLENGE, reply("e5"), reply("Nf3")];
+  const d = orchestration.decide(texts, { me: WHITE, rootAuthor: WHITE });
+  assert.strictEqual(d.isGame, true, "string[] input still recognized");
+  assert.strictEqual(d.moveCount, 3, "all string moves replayed");
+  assert.strictEqual(d.error, null, "no desync");
+  assert.strictEqual(d.turn, "b", "Black to move after 2.Nf3");
+
+  // Mixed input (strings + objects) is normalized item-by-item.
+  const mixed = [CHALLENGE, { text: reply("e5"), author: BLACK }];
+  const dm = orchestration.decide(mixed, { me: WHITE, rootAuthor: WHITE });
+  assert.strictEqual(dm.moveCount, 2, "mixed string/object items both replay");
+  ok("legacy: plain string[] (and mixed) input behaves exactly as before");
+})();
+
+// ---- 17. pure helpers: normalizePosts / collectMoveTexts / handleMatch -----
+(function pureHelpers() {
+  const np = orchestration.normalizePosts([
+    "hi", { text: "yo", author: "@Some_One" }, { author: "x" }, null, 42,
+  ]);
+  assert.strictEqual(np.length, 5, "every item normalizes");
+  assert.strictEqual(np[0].author, null, "string item -> author null");
+  assert.strictEqual(np[1].author, "some_one", "author is normalized (no @, lowercase)");
+  assert.strictEqual(np[2].text, "", "missing text -> empty string");
+  assert.strictEqual(np[3].text, "", "null item -> empty text");
+  assert.strictEqual(np[4].author, null, "non-object item -> author null");
+
+  assert.strictEqual(orchestration.handleMatch("gand-tr", "gand-tr.bsky.social"), true,
+    "bare vs qualified handle matches on local part");
+  assert.strictEqual(orchestration.handleMatch("gand-tr.example.com", "gand-tr.bsky.social"), false,
+    "two different qualified handles never match");
+
+  // Refined sides: once the full-handle player claims the short-mention seat,
+  // the decision surfaces the FULL handle (and the lookalike loses myColor).
+  const claimRoot = protocol.formatMove({
+    gameId: "chess", moveText: "e4", opponentHandle: "gand-tr", isChallenge: true,
+  });
+  const dRef = orchestration.decide(
+    [
+      { text: claimRoot, author: "arda.bsky.social" },
+      { text: reply("e5"), author: "gand-tr.bsky.social" },
+    ],
+    { me: "gand-tr.example.com", rootAuthor: "arda.bsky.social" }
+  );
+  assert.strictEqual(dRef.black, "gand-tr.bsky.social",
+    "decision.black is refined to the locked full handle");
+  assert.strictEqual(dRef.myColor, null,
+    "a qualified lookalike no longer matches the refined Black");
+
+  const moves = orchestration.collectMoveTexts(
+    [
+      { text: CHALLENGE, author: WHITE },
+      { text: "gl hf!", author: OUTSIDER },            // not move-shaped
+      { text: reply("e5"), author: OUTSIDER },          // wrong author
+      { text: reply("e5"), author: BLACK },             // the real move
+      { text: reply("Nf3"), author: BLACK },            // out of turn (White's slot)
+      { text: reply("Nf3"), author: null },             // unreadable -> trusted
+    ],
+    protocol, WHITE, BLACK
+  );
+  // JSON-compare: the array was built inside the vm realm, so deepStrictEqual's
+  // prototype check would fail cross-realm even on identical values.
+  assert.strictEqual(JSON.stringify(moves), JSON.stringify(["e4", "e5", "Nf3"]),
+    "gated move list in order");
+  ok("pure helpers: normalizePosts / handleMatch / collectMoveTexts");
+})();
+
+// ---- 18. AUTHORSHIP: identity locks defeat federated lookalikes ------------
+(function identityLocks() {
+  // WHITE lock: the root author reads as local "alice"; a federated lookalike
+  // "alice@evil.example" would PASS handleMatch's bare-vs-qualified bridge, but
+  // a locked side requires the EXACT author string — the hijack move is skipped.
+  const root = protocol.formatMove({
+    gameId: "chess", moveText: "e4", opponentHandle: "bob", isChallenge: true,
+  });
+  const whiteImposter = orchestration.decide(
+    [
+      { text: root, author: "alice" },
+      { text: reply("e5"), author: "bob" },
+      { text: reply("Nf3"), author: "alice@evil.example" }, // white-slot hijack
+    ],
+    { me: "alice", rootAuthor: "alice" }
+  );
+  assert.strictEqual(whiteImposter.moveCount, 2, "white lookalike's move skipped");
+  assert.strictEqual(whiteImposter.error, null, "and causes no desync");
+  assert.strictEqual(whiteImposter.turn, "w", "still the real White's turn");
+
+  // BLACK lock: the bare mention "bob" is claimed by the first rightful reader
+  // ("bob" himself); afterwards "bob@evil.example" — who would ALSO handleMatch
+  // the bare mention — is rejected by the exact lock.
+  const blackImposter = orchestration.decide(
+    [
+      { text: root, author: "alice" },
+      { text: reply("e5"), author: "bob" },          // locks black to "bob"
+      { text: reply("Nf3"), author: "alice" },
+      { text: reply("Nc6"), author: "bob@evil.example" }, // black-slot hijack
+    ],
+    { me: "alice", rootAuthor: "alice" }
+  );
+  assert.strictEqual(blackImposter.moveCount, 3, "black lookalike's move skipped after lock");
+  assert.strictEqual(blackImposter.error, null, "no desync from the lookalike");
+  assert.strictEqual(blackImposter.turn, "b", "still the real Black's turn");
+  ok("authorship: per-side identity locks reject federated lookalikes mid-game");
+})();
+
+// ---- 19. lastAcceptedMoveIndex: reply target skips outsider move posts -----
+(function replyTargetIndex() {
+  // Thread: root move (0), chatter (1), Black's move (2), outsider's parseable
+  // fake (3), plain chatter (4). The reply target must be index 2 — the last
+  // ACCEPTED move — never the outsider's post (3) or trailing chatter (4).
+  const posts = [
+    { text: CHALLENGE, author: WHITE },
+    { text: "good luck!", author: OUTSIDER },
+    { text: reply("e5"), author: BLACK },
+    { text: reply("d4"), author: OUTSIDER }, // parseable but rejected
+    { text: "wow tense", author: OUTSIDER },
+  ];
+  assert.strictEqual(orchestration.lastAcceptedMoveIndex(posts), 2,
+    "target is the last ACCEPTED move post");
+  assert.strictEqual(orchestration.lastAcceptedMoveIndex([]), -1, "empty -> -1");
+  assert.strictEqual(
+    orchestration.lastAcceptedMoveIndex([{ text: "hi", author: "a" }]),
+    -1,
+    "no move-shaped post -> -1"
+  );
+  // Legacy string[] shape works here too (authors unknown -> trusted).
+  assert.strictEqual(
+    orchestration.lastAcceptedMoveIndex([CHALLENGE, "nice", reply("e5")]),
+    2,
+    "string[] input: last parseable is last accepted"
+  );
+  ok("lastAcceptedMoveIndex: outsider posts can't become the reply target");
+})();
+
 console.log("\nAll orchestration tests passed (" + passed + " checks).");

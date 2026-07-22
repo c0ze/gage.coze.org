@@ -75,7 +75,18 @@
   // hands-free posting once the full game flow is trusted.
   const AUTO_SEND = false;
 
-  const container = () => document.querySelector(SEL.container) || document.body;
+  // Thread container. In the SIMPLE (single-column) UI .columns-area holds only
+  // the status column, but in the ADVANCED (multi-column) UI it spans EVERY
+  // column — home timeline, notifications, … — so reading from it mixed
+  // unrelated home-timeline posts into the "thread". Scope to the column that
+  // holds the FOCAL post (.detailed-status -> closest .column) whenever a focal
+  // post exists; fall back to .columns-area (single-column / not yet hydrated),
+  // then document.body.
+  function container() {
+    const focal = document.querySelector(SEL.detailed);
+    const column = focal ? focal.closest(".column") : null;
+    return column || document.querySelector(SEL.container) || document.body;
+  }
 
   // postNodes() -> the thread's posts as an ORDERED, DEDUPED array of elements.
   // A .detailed-status can contain a nested .status (or vice-versa in some
@@ -96,18 +107,42 @@
     return kept;
   }
 
+  // innerText, but fall back to textContent when innerText is empty/whitespace.
+  // A post behind a CONTENT WARNING keeps its body collapsed (display:none), so
+  // innerText is "" and a CW'd move would VANISH from the thread — later moves
+  // then look illegal (false desync). textContent still carries the hidden text,
+  // so the move survives without the viewer clicking "show more".
+  function visibleOrHiddenText(el) {
+    const t = el.innerText;
+    if (t && t.trim()) return t;
+    return el.textContent || "";
+  }
+
   // Prefer the detailed content when present (focal post), else the status
-  // content. innerText only — plain text is all the protocol needs.
+  // content. Plain text is all the protocol needs.
   function postTextOf(node) {
     const el =
       node.querySelector(SEL.detailedContent) ||
       node.querySelector(SEL.statusContent);
     // The focal node itself may BE the content container in trimmed layouts.
-    if (el) return el.innerText;
+    if (el) return visibleOrHiddenText(el);
     if (node.matches(SEL.detailedContent) || node.matches(SEL.statusContent)) {
-      return node.innerText;
+      return visibleOrHiddenText(node);
     }
-    return node.innerText || "";
+    return visibleOrHiddenText(node);
+  }
+
+  // The post's VISIBLE text only (innerText, no hidden-text fallback) — what a
+  // human (and the reply indicator) can actually see. A CW-collapsed post reads
+  // as empty/spoiler-only here even though postTextOf still recovers the hidden
+  // move. Used by postReply's indicator gate, which must never demand hidden
+  // text the indicator can't render.
+  function postVisibleTextOf(node) {
+    const el =
+      node.querySelector(SEL.detailedContent) ||
+      node.querySelector(SEL.statusContent) ||
+      node;
+    return el.innerText || "";
   }
 
   // A status's permalink is /@<acct>/<id>; the trailing digits are the id. Used
@@ -251,12 +286,47 @@
     return postNodes().map(postTextOf);
   }
 
-  // postReply(text) -> Promise. Opens a reply to the LATEST (newest) post in the
-  // thread and fills `text` into the compose textarea; clicks Post only if
-  // AUTO_SEND. Rejects (does not swallow) so the UI can surface a failure.
+  // readThreadPosts() -> [{ text, author }]  same posts as readThreadMoves, plus
+  // each post's author handle (lowercased) or null when unreadable. The
+  // orchestration uses the author to accept only the right player's moves.
+  function readThreadPosts() {
+    return postNodes().map(function (node) {
+      return { text: postTextOf(node), author: authorHandleOf(node) };
+    });
+  }
+
+  // The reply target: the post carrying the LAST ACCEPTED move — the same
+  // authorship-gated pick the decision layer makes (orchestration.
+  // lastAcceptedMoveIndex), so an outsider's skipped "[e5] #gage" can never
+  // become the parent of the next legitimate move. Fallbacks, in order: the
+  // last post whose text merely parses as a move (orchestration not loaded),
+  // then the last post.
+  function lastGamePost(nodes) {
+    const orch = Gage.orchestration;
+    if (orch && orch.lastAcceptedMoveIndex) {
+      const idx = orch.lastAcceptedMoveIndex(
+        nodes.map(function (n) {
+          return { text: postTextOf(n), author: authorHandleOf(n) };
+        })
+      );
+      if (idx >= 0) return nodes[idx];
+    }
+    const protocol = Gage.protocol;
+    if (protocol && protocol.parseMove) {
+      for (let i = nodes.length - 1; i >= 0; i--) {
+        if (protocol.parseMove(postTextOf(nodes[i]))) return nodes[i];
+      }
+    }
+    return nodes.length ? nodes[nodes.length - 1] : null;
+  }
+
+  // postReply(text) -> Promise. Opens a reply to the LAST GAME POST in the
+  // thread (fallback: newest post) and fills `text` into the compose textarea;
+  // clicks Post only if AUTO_SEND. Rejects (does not swallow) so the UI can
+  // surface a failure.
   async function postReply(text) {
     const nodes = postNodes();
-    const target = nodes[nodes.length - 1]; // newest post keeps the chain nested
+    const target = lastGamePost(nodes); // last move keeps the chain nested under the game
     if (!target) throw new Error("[gage] postReply: no post to reply to");
     const replyBtn = replyButtonOf(target);
     if (!replyBtn) throw new Error("[gage] postReply: no reply control on target post");
@@ -270,11 +340,16 @@
     // was mid-reply to something else) or a wrong-bar click would otherwise pass
     // the gate and fill the wrong thread. The indicator quotes the target's body
     // through the same content renderer readThreadMoves uses, so a short prefix
-    // of postTextOf(target) appears verbatim in indicator.innerText (verified
-    // live 2026-07-22; short because the indicator truncates long posts). An
-    // empty target text (image-only post) can't be matched — accept any
-    // indicator rather than making such replies impossible.
-    const wantPrefix = String(postTextOf(target) || "")
+    // of the target's VISIBLE text appears verbatim in the indicator (verified
+    // live 2026-07-22; short because the indicator truncates long posts). The
+    // prefix is built from postVisibleTextOf, NOT postTextOf: a CW-collapsed
+    // target's move text is hidden, and the indicator renders it collapsed too,
+    // so demanding the hidden text would time out every reply to a CW'd move.
+    // An empty visible text (image-only or fully-collapsed CW post) can't be
+    // matched — accept any indicator rather than making such replies
+    // impossible. The haystack includes the indicator's textContent as well, so
+    // an indicator that carries the body hidden-but-in-DOM still matches.
+    const wantPrefix = String(postVisibleTextOf(target) || "")
       .replace(/\s+/g, " ")
       .trim()
       .slice(0, 16);
@@ -283,7 +358,8 @@
         const el = document.querySelector(".reply-indicator");
         if (!el) return null;
         if (!wantPrefix) return el;
-        const got = (el.innerText || "").replace(/\s+/g, " ");
+        const got = ((el.innerText || "") + " " + (el.textContent || ""))
+          .replace(/\s+/g, " ");
         return got.indexOf(wantPrefix) !== -1 ? el : null;
       });
     } catch (e) {
@@ -325,7 +401,13 @@
   //   (b) watch childList + attributes(href) + characterData so hydration
   //       triggers a rescan;
   //   (c) only record/emit once a post has an id AND non-empty text — the rest
-  //       are retried on later mutations.
+  //       are retried on later mutations. The AUTHOR may still be unhydrated at
+  //       emit time; the decision layer trusts author:null moves (hydration
+  //       tolerance), so content.js schedules a bounded re-read whenever a
+  //       move-shaped post is read with a null author — that re-read is what
+  //       picks up the late-hydrating author. The observer deliberately does
+  //       NOT gate on the author: a page whose author markup never resolves
+  //       (selector rot) must keep nudging rather than go silent.
   // Scans are coalesced and cancelled on disconnect so nothing fires after
   // unsubscribe. NOTE: treat this as a "thread changed" nudge — the orchestration
   // should re-read via readThreadMoves() as the source of truth rather than trust
@@ -378,6 +460,7 @@
 
   Gage.transports.mastodon = {
     readThreadMoves,
+    readThreadPosts,
     postReply,
     observe,
     getMyHandle,
