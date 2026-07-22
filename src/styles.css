@@ -244,6 +244,14 @@
   box-shadow: inset 0 0 0 3px var(--accent);
 }
 
+/* Movable-piece hint (movement games, before a piece is picked): a faint accent
+   ring so "which piece can I move?" is obvious — critical for a checkers forced
+   capture, where only the capturing piece has a legal move. Softer than .gage-sel /
+   .gage-capture so a normal position with many movers doesn't read as noise. */
+.gage-mover {
+  box-shadow: inset 0 0 0 2px rgba(79, 157, 91, 0.5);
+}
+
 /* Piece contrast: white = white fill + subtle dark outline; black = near-black. */
 .gage-white {
   color: #ffffff;

@@ -29,10 +29,16 @@
     // click on a legal square commits immediately (no select step). MOVEMENT
     // games (chess, checkers) leave moveKind unset and use the two-click flow.
     const isPlacement = game.moveKind === "place";
+    // Show the movable-piece hint only when at most this many pieces can move — a
+    // constrained position like a checkers forced capture. Above it (an open chess
+    // middlegame) the rings would be noise, so we suppress them.
+    const MOVER_HINT_MAX = 4;
     let current = state; // latest State
     let selected = null; // Square string, or null (movement games only)
     let targets = []; // legal destination Squares for `selected` (or all placements)
     let captures = new Set(); // subset of `targets` that are captures
+    let movers = null; // movement games: squares whose piece has a legal move this turn
+    let moversState = null; // the `current` that `movers` was computed for (cache guard)
 
     const grid = document.createElement("div");
     grid.className = "gage-board";
@@ -56,9 +62,44 @@
       captures = new Set();
     }
 
+    // Movement games: the squares whose piece has a legal move THIS turn. For
+    // checkers this respects the forced-capture rule (only the capturing piece
+    // qualifies), so a faint hint answers "which piece can I move?" — the forced-
+    // capture case that otherwise reads as a frozen board. Computed once per position
+    // (cached via moversState) since legalMovesFrom per piece isn't free.
+    function computeMovers(cells) {
+      // No hints for placement games or a FINISHED game. Chess draws by repetition /
+      // 50-move / insufficient material are terminal yet legalMovesFrom still yields
+      // moves, so guard on terminal explicitly — the board is frozen (see onClick).
+      if (isPlacement || typeof game.legalMovesFrom !== "function" || game.terminal(current).over) {
+        movers = null;
+        moversState = current;
+        return;
+      }
+      const toMove = typeof game.turn === "function" ? game.turn(current) : null;
+      const set = new Set();
+      for (let row = 0; row < rows; row++) {
+        for (let col = 0; col < cols; col++) {
+          const model = (cells[row] && cells[row][col]) || {};
+          if (!model.glyph) continue; // empty square
+          if (toMove && model.color && model.color !== toMove) continue; // not to move
+          const sq = squareOf(game, row, col);
+          if (game.legalMovesFrom(current, sq).length) set.add(sq);
+        }
+      }
+      movers = set;
+      moversState = current;
+    }
+
     function draw() {
       const cells = game.view(current);
+      if (moversState !== current) computeMovers(cells);
       const targetSet = new Set(targets);
+      // Hint movable pieces only while nothing is selected (once a piece is picked
+      // its targets take over), never for placement games, and only when FEW pieces
+      // can move (a forced capture / tight position) — see MOVER_HINT_MAX.
+      const showMovers =
+        !isPlacement && !selected && !!(movers && movers.size) && movers.size <= MOVER_HINT_MAX;
       grid.innerHTML = "";
       for (let row = 0; row < rows; row++) {
         for (let col = 0; col < cols; col++) {
@@ -69,6 +110,7 @@
           el.className = "gage-sq " + (dark ? "gage-dark" : "gage-light");
           if (model.tint) el.style.background = model.tint;
           if (selected === sq) el.classList.add("gage-sel");
+          else if (showMovers && movers.has(sq)) el.classList.add("gage-mover");
           if (targetSet.has(sq)) {
             // Prefer the game's capture info (handles en passant, whose
             // destination is empty); else fall back to "destination has a piece".
