@@ -26,10 +26,12 @@
 //  [4] My handle: a[aria-label="Profile"][href^="/profile/"] -> /profile/<handle>.
 //        null when logged out or the nav isn't rendered.
 //  [5] Reply control: [data-testid="replyBtn"] within the item.
-//  [6] Composer text input: [data-testid="composerTextInput"] — a contenteditable
-//        ProseMirror editor (NOT a real <textarea>; .value is inert). Fill via
-//        focus() + document.execCommand("insertText", ...), same approach as the X
-//        DraftJS path.
+//  [6] Composer editable: [data-testid="composePostView"] [contenteditable="true"]
+//        — a Tiptap/ProseMirror editor with NO testid of its own (verified live
+//        2026-07-22). .value is inert; fill via focus() + document.execCommand(
+//        "selectAll"/"insertText", ...), same approach as the X DraftJS path
+//        (verified: the execCommand insert commits into the ProseMirror model and
+//        enables Publish).
 //  [7] Publish button: [data-testid="composerPublishBtn"]. AUTO_SEND=false -> we
 //        fill only and the human clicks Publish.
 //  [8] Incoming replies: MutationObserver on the thread container (childList+
@@ -47,12 +49,12 @@
 // lazily loads long threads, so a long game may need scrolling to fully hydrate
 // before reconstruction is complete. (Fine for short games; revisit later.)
 //
-// LIVE-VERIFICATION RISK: a synthetic .click() on replyBtn did NOT open the
-// composer in testing (react-native-web often ignores untrusted clicks). postReply
-// clicks then polls for the composer input to appear; if it never does, it rejects
-// with a clear message. The composer-open mechanism is the main thing to re-verify
-// live — it may need a trusted user gesture or a different trigger (composeFAB / the
-// compose intent URL) as a fallback.
+// COMPOSER OPEN (verified live 2026-07-22): a synthetic replyBtn.click() DOES open
+// the reply composer and execCommand fills its ProseMirror editable — the earlier
+// failure was an unverified-account "verify your email" gate, not the click.
+// postReply clicks, polls for the composer editable, fills it, and (AUTO_SEND off)
+// leaves Publish to the human. NOTE: a Bluesky account whose email is unverified
+// cannot post at all — that is a platform gate, surfaced as its own modal.
 (function () {
   const Gage = (window.Gage = window.Gage || {});
   Gage.transports = Gage.transports || {};
@@ -66,7 +68,10 @@
     // A post's permalink -> /post/<rkey>; used for identity + observer dedupe.
     postLink: 'a[href*="/post/"]',
     reply: '[data-testid="replyBtn"]',
-    editor: '[data-testid="composerTextInput"]',
+    // The composer editable is a Tiptap/ProseMirror contenteditable INSIDE
+    // [data-testid="composePostView"] and has NO testid of its own (verified live
+    // 2026-07-22) — scope to the compose view's contenteditable.
+    editor: '[data-testid="composePostView"] [contenteditable="true"]',
     publish: '[data-testid="composerPublishBtn"]',
     // Logged-in user's own profile link in the nav rail.
     myProfileLink: 'a[aria-label="Profile"][href^="/profile/"]',
