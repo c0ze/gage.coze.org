@@ -174,7 +174,7 @@ function json(obj, status, extraHeaders) {
 // on first-write-wins. Left permissive on purpose for v1.
 const CORS_HEADERS = {
   "access-control-allow-origin": "*",
-  "access-control-allow-methods": "GET, PUT, OPTIONS",
+  "access-control-allow-methods": "GET, HEAD, PUT, OPTIONS",
   "access-control-allow-headers": "content-type",
   "access-control-max-age": "86400",
 };
@@ -418,6 +418,27 @@ function placeholderResponse() {
   });
 }
 
+// HEAD /img/<key>.png -> existence check used by the client's uploadBoardImage
+// (share.js) to skip re-rendering + re-uploading an already-cached position.
+// 200 (no body) when the object exists, 404 when it doesn't — so share.js's
+// `head.ok` is true only for a real hit. CORS-open like GET. (Without this the
+// route 405'd HEAD, which surfaced as a console error and defeated the skip.)
+async function handleImageHead(env, key) {
+  const obj = await env.BUCKET.head(key);
+  if (obj) {
+    const headers = new Headers();
+    headers.set("content-type", "image/png");
+    headers.set("cache-control", CACHE_IMMUTABLE);
+    headers.set("access-control-allow-origin", "*");
+    if (obj.httpEtag) headers.set("etag", obj.httpEtag);
+    return new Response(null, { status: 200, headers });
+  }
+  return new Response(null, {
+    status: 404,
+    headers: { "cache-control": CACHE_SHORT, "access-control-allow-origin": "*" },
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Route: PUT /img/<key>.png  -> upload a board PNG (first-write-wins)
 // ---------------------------------------------------------------------------
@@ -504,11 +525,12 @@ async function handle(request, env) {
     }
 
     if (request.method === "GET") return handleImageGet(env, key);
+    if (request.method === "HEAD") return handleImageHead(env, key);
     if (request.method === "PUT") return handleImagePut(env, key, request);
 
     return new Response("Method Not Allowed", {
       status: 405,
-      headers: { allow: "GET, PUT, OPTIONS", "access-control-allow-origin": "*" },
+      headers: { allow: "GET, HEAD, PUT, OPTIONS", "access-control-allow-origin": "*" },
     });
   }
 
