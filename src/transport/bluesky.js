@@ -155,16 +155,37 @@
   // survive in .innerText; the author name/handle/timestamp — which ARE inside
   // links — are excluded, so a bracketed display name can't shadow the "[move]"
   // slot the protocol reads.
-  function postTextOf(item) {
+  // postBodyEl(item) -> the ELEMENT holding the post's body text (or null for an
+  // image-only post). The tagged [data-testid="postText"] when present (feeds /
+  // future builds), else the largest <div dir="auto"> not itself inside a link.
+  // Both postTextOf (text) and postElements (injection anchor) read through this so
+  // they can never disagree about which block is the body.
+  function postBodyEl(item) {
     const tagged = item.querySelector(SEL.postText);
-    if (tagged && tagged.innerText.trim()) return tagged.innerText;
-    let best = "";
+    if (tagged && tagged.innerText.trim()) return tagged;
+    let best = null;
+    let bestLen = -1;
     for (const el of item.querySelectorAll('div[dir="auto"]')) {
       if (el.closest("a")) continue; // skip the author/handle/time links
-      const t = el.innerText || "";
-      if (t.length > best.length) best = t;
+      const len = (el.innerText || "").length;
+      if (len > bestLen) { bestLen = len; best = el; }
     }
     return best;
+  }
+
+  function postTextOf(item) {
+    const el = postBodyEl(item);
+    return el ? el.innerText : "";
+  }
+
+  // postElements() -> [{ node, anchor, text }] in thread order (root first). Like
+  // readThreadMoves(), but also returns each post's element (node) and its body
+  // element (anchor) so the board injector can drop a rendered position under the
+  // move. anchor may be null (image-only post) -> the injector appends to node.
+  function postElements() {
+    return Array.from(document.querySelectorAll(SEL.item)).map(function (item) {
+      return { node: item, anchor: postBodyEl(item), text: postTextOf(item) };
+    });
   }
 
   // Poll until getter() returns truthy or we time out (Bluesky renders async, and
@@ -309,6 +330,7 @@
 
   Gage.transports.bluesky = {
     readThreadMoves,
+    postElements,
     postReply,
     observe,
     getMyHandle,

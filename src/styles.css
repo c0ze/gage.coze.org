@@ -291,3 +291,19 @@
   transform: none;
   box-shadow: none;
 }
+
+/* Board image injected under each move reply on Bluesky (which, unlike X and
+   Mastodon, doesn't unfurl our /g/ link into a card). board-inject.js renders the
+   position client-side so anyone with the extension sees the game play inline. It
+   lives in the HOST page's DOM, not the panel, so pin the box explicitly (and
+   !important) rather than inherit Bluesky's img resets. Scoped to our marker. */
+.gage-thread-board[data-gage="1"] {
+  display: block !important;
+  width: 300px !important;
+  max-width: 100% !important;
+  height: auto !important;
+  margin: 10px 0 4px !important;
+  border-radius: 12px !important;
+  border: 1px solid rgba(120, 150, 130, 0.35) !important;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12) !important;
+}

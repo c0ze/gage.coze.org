@@ -328,10 +328,17 @@
         setupGame(decision); // render + (re)observe (into the panel, even while hidden)
       }
       applyUiState();
+      // Drop a board image under each move reply (Bluesky only; deduped by position
+      // so this is a cheap no-op when nothing changed, and re-injects if the platform
+      // recycled a post's node). Runs OUTSIDE the sig-gate so recycled boards return.
+      if (Gage.injectThreadBoards) Gage.injectThreadBoards(Gage.games[decision.gameId]);
     } else {
       panelActive = false;
       lastRenderSig = null;
       teardownObserver();
+      // Left a game thread (SPA nav): drop any boards injected into the old thread so
+      // a recycled node can't keep a stale one — the in-game sweep no longer runs here.
+      if (Gage.clearThreadBoards) Gage.clearThreadBoards();
       applyUiState(); // hide the panel + launcher
     }
   }

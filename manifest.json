@@ -24,6 +24,7 @@
         "src/transport/bluesky.js",
         "src/transport/select.js",
         "src/transport/orchestration.js",
+        "src/board-inject.js",
         "src/content.js"
       ],
       "css": ["src/styles.css"],
