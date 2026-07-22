@@ -16,8 +16,11 @@
 //        oldest first. The testid suffix after "postThreadItem-by-" is the author
 //        handle (e.g. postThreadItem-by-otter.gg). (A feed uses feedItem-by-*
 //        instead; we only read the thread items.)
-//  [2] Post text: [data-testid="postText"] within the item -> .innerText (plain
-//        text). A post may legitimately have no text (image-only) -> "".
+//  [2] Post text: FEED items expose [data-testid="postText"], but THREAD items
+//        (postThreadItem-*) do NOT — a thread page has ZERO postText testids
+//        (verified live 2026-07-22). postTextOf() prefers postText when present,
+//        else the largest <div dir="auto"> block not inside a link (the body).
+//        A post may legitimately have no text (image-only) -> "".
 //  [3] Author handle: the [1] testid suffix after "postThreadItem-by-", OR the
 //        item's a[href^="/profile/<handle>"]. Normalize (drop "@", lowercase).
 //  [4] My handle: a[aria-label="Profile"][href^="/profile/"] -> /profile/<handle>.
@@ -137,9 +140,26 @@
     return m ? `${m[1].toLowerCase()}/${m[2]}` : null;
   }
 
+  // postTextOf(item) -> the post's BODY text. Bluesky's FEED items carry a
+  // [data-testid="postText"], but THREAD items (postThreadItem-by-*) do NOT —
+  // VERIFIED live 2026-07-22: a thread page has ZERO postText testids; the body is
+  // an unlabeled <div dir="auto"> (react-native-web). So prefer postText when
+  // present (feeds / future builds) and otherwise fall back to the LARGEST
+  // dir="auto" block that is not ITSELF inside a link. In-body hashtag/mention
+  // links (e.g. "#gage", "@rival") are <a> NESTED inside that block, so they
+  // survive in .innerText; the author name/handle/timestamp — which ARE inside
+  // links — are excluded, so a bracketed display name can't shadow the "[move]"
+  // slot the protocol reads.
   function postTextOf(item) {
-    const el = item.querySelector(SEL.postText);
-    return el ? el.innerText : "";
+    const tagged = item.querySelector(SEL.postText);
+    if (tagged && tagged.innerText.trim()) return tagged.innerText;
+    let best = "";
+    for (const el of item.querySelectorAll('div[dir="auto"]')) {
+      if (el.closest("a")) continue; // skip the author/handle/time links
+      const t = el.innerText || "";
+      if (t.length > best.length) best = t;
+    }
+    return best;
   }
 
   // Poll until getter() returns truthy or we time out (Bluesky renders async, and
