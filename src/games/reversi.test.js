@@ -14,6 +14,8 @@
 //   6. applyMoveText <-> applyMove parity (byte-identical States).
 //   7. disc-count terminal + a draw.
 //   8. legalMoves() / mustPass() correctness.
+//   9. corrupt histories (zero-flip / occupied / premature pass / malformed /
+//      token-after-end) are refused per the checkers replay contract.
 "use strict";
 
 const fs = require("fs");
@@ -259,6 +261,56 @@ function discAt(state, sq) {
   assert.strictEqual(R.legalMoves(end.state).length, 0, "terminal => no legal moves");
   assert.strictEqual(R.mustPass(end.state), false, "terminal is not a pass, it's game over");
   ok("helpers: legalMoves/mustPass agree with applyMove and terminality");
+})();
+
+// ---- 9. corrupt histories are refused (checkers replay contract) ----------
+// States arrive base64-decoded from URLs (untrusted). A token list that does
+// not replay as a legal game must be refused: terminal reports
+// { over:false, corrupt:true } and every consumer path declines to offer or
+// accept moves against the corrupt base — exactly like checkers.
+(function corruptHistories() {
+  function assertCorrupt(state, label) {
+    const t = R.terminal(state);
+    assert.strictEqual(t.over, false, label + ": terminal.over is false");
+    assert.strictEqual(t.corrupt, true, label + ": terminal.corrupt is true");
+    assert.strictEqual(t.result, undefined, label + ": no result is invented");
+    sameShape(R.legalMoves(state), [], label + ": legalMoves is empty");
+    sameShape(R.legalMovesFrom(state, "d6"), [], label + ": legalMovesFrom is empty");
+    assert.strictEqual(R.mustPass(state), false, label + ": mustPass is false (not a stuck side)");
+    assert.strictEqual(R.applyMove(state, "d6", "d6"), null, label + ": applyMove is null");
+    assert.strictEqual(R.applyMoveText(state, "d6"), null, label + ": applyMoveText is null");
+    assert.strictEqual(R.applyMoveText(state, "pass"), null, label + ": 'pass' is refused");
+    assert.strictEqual(R.isCapture(state, "d6", "d6"), false, label + ": isCapture is false");
+    assert.strictEqual(R.moveText(state, "d6", "d6"), "", label + ": moveText labels nothing");
+  }
+
+  // A zero-flip placement (a1 flanks nothing at the start).
+  assertCorrupt({ game: "reversi", moves: ["a1"] }, "zero-flip");
+  // A placement onto an occupied centre square.
+  assertCorrupt({ game: "reversi", moves: ["d4"] }, "occupied");
+  // A premature "pass" while legal placements exist.
+  assertCorrupt({ game: "reversi", moves: ["pass"] }, "premature pass");
+  // A malformed token.
+  assertCorrupt({ game: "reversi", moves: ["zz"] }, "malformed");
+
+  // A corrupt token AFTER a valid prefix: the board freezes at the last good
+  // position — the view renders the prefix, never a nonsense board.
+  const good = { game: "reversi", moves: ["d6"] };
+  const bad = { game: "reversi", moves: ["d6", "a1"] };
+  assertCorrupt(bad, "bad suffix");
+  sameShape(R.view(bad), R.view(good), "view renders the last good prefix");
+  assert.strictEqual(R.positionKey(bad), R.positionKey(good), "positionKey frozen at last good position");
+
+  // Any token appended after a genuinely finished game is corrupt too ("pass"
+  // included: at a double-dead position the opponent has no move either).
+  const end = playToEnd().state;
+  assertCorrupt({ game: "reversi", moves: end.moves.concat(["pass"]) }, "pass after game over");
+
+  // Valid states never report corrupt.
+  assert.strictEqual(R.terminal(R.initialState()).corrupt, undefined, "fresh state is not corrupt");
+  assert.strictEqual(R.terminal(good).corrupt, undefined, "a valid history is not corrupt");
+  assert.strictEqual(R.terminal(end).over, true, "a finished valid game stays terminal, not corrupt");
+  ok("corrupt histories: terminal {over:false,corrupt:true}, no moves offered or accepted");
 })();
 
 // ---- shared helpers for the search-based fixtures --------------------------

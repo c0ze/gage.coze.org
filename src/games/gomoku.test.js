@@ -14,6 +14,8 @@
 //   6. positionKey: length <= 115, URL-safe, deterministic, visual-only.
 //   7. a draw is representable (full board, no five).
 //   8. no moves after terminal; mustPass is always false; legalMoves count.
+//   9. corrupt histories (occupied cell / malformed / token-after-win) are
+//      refused per the checkers replay contract.
 "use strict";
 
 const fs = require("fs");
@@ -289,6 +291,52 @@ function play(tokens) {
   sameShape(g.legalMovesFrom(won, "o1"), [], "legalMovesFrom empty after a win");
   assert.strictEqual(g.mustPass(won), false, "mustPass stays false even when terminal");
   ok("terminal guards: no moves after a win, mustPass always false");
+})();
+
+// ---- 9. corrupt histories are refused (checkers replay contract) ----------
+// States arrive base64-decoded from URLs (untrusted). A token list that does
+// not replay as a legal game must be refused: terminal reports
+// { over:false, corrupt:true } and every consumer path declines to offer or
+// accept moves against the corrupt base — exactly like checkers.
+(function corruptHistories() {
+  function assertCorrupt(state, label) {
+    const t = g.terminal(state);
+    assert.strictEqual(t.over, false, label + ": terminal.over is false");
+    assert.strictEqual(t.corrupt, true, label + ": terminal.corrupt is true");
+    assert.strictEqual(t.result, undefined, label + ": no result is invented");
+    sameShape(g.legalMoves(state), [], label + ": legalMoves is empty");
+    sameShape(g.legalMovesFrom(state, "a1"), [], label + ": legalMovesFrom is empty");
+    assert.strictEqual(g.applyMove(state, "a1", "a1"), null, label + ": applyMove is null");
+    assert.strictEqual(g.applyMoveText(state, "a1"), null, label + ": applyMoveText is null");
+    assert.strictEqual(g.moveText(state, "a1", "a1"), "", label + ": moveText labels nothing");
+    assert.strictEqual(g.mustPass(state), false, label + ": mustPass stays false");
+  }
+
+  // An occupied-cell token: the second "h8" targets a taken intersection.
+  assertCorrupt({ game: "gomoku", moves: ["h8", "h8"] }, "occupied cell");
+  // Malformed / off-board tokens.
+  assertCorrupt({ game: "gomoku", moves: ["zz"] }, "malformed");
+  assertCorrupt({ game: "gomoku", moves: ["h8", "p1"] }, "off-board file");
+  // A token AFTER a completed win: "o1" follows White's horizontal five.
+  assertCorrupt(
+    { game: "gomoku", moves: ["d8", "a15", "e8", "b15", "f8", "c15", "g8", "d15", "h8", "o1"] },
+    "token after win"
+  );
+
+  // The board freezes at the last good position: the corrupt state renders the
+  // valid prefix, never a nonsense board.
+  const good = play(["h8"]);
+  const bad = { game: "gomoku", moves: ["h8", "h8"] };
+  sameShape(g.view(bad), g.view(good), "view renders the last good prefix");
+  assert.strictEqual(g.positionKey(bad), g.positionKey(good), "positionKey frozen at last good position");
+
+  // Valid states never report corrupt — including a legally WON game, whose
+  // final (winning) token is legal and whose terminal stays { over:true }.
+  assert.strictEqual(g.terminal(g.initialState()).corrupt, undefined, "fresh state is not corrupt");
+  const won = play(["d8", "a15", "e8", "b15", "f8", "c15", "g8", "d15", "h8"]);
+  assert.strictEqual(g.terminal(won).corrupt, undefined, "a legally won game is not corrupt");
+  assert.strictEqual(g.terminal(won).over, true, "…and it stays terminal");
+  ok("corrupt histories: terminal {over:false,corrupt:true}, no moves offered or accepted");
 })();
 
 console.log("\nAll gomoku tests passed (" + passed + " checks).");

@@ -58,19 +58,38 @@
     return { row: N - rank, col };
   }
 
-  // Replay a state's move list into a fresh board: a 15x15 grid of 0 (empty),
-  // "w", or "b". White plays even indices, Black odd. No legality checking here —
-  // legality is enforced when moves are appended (applyMove / applyMoveText).
-  function board(state) {
+  // Replay a state's move list into { grid, turn, ok }: grid is a 15x15 board
+  // of 0 (empty) | "w" | "b", turn the side to move after the replayed prefix,
+  // and ok false if any stored token failed to resolve. White plays even
+  // indices, Black odd.
+  //
+  // EVERY token is validated exactly as applyMove/applyMoveText enforced when
+  // it was recorded: it must parse to an on-board intersection, target an
+  // EMPTY cell, and no token may follow a completed win. (A token after a full
+  // 225-stone board necessarily hits an occupied cell, so the draw case needs
+  // no separate check.) States arrive base64-decoded from URLs (untrusted), so
+  // a corrupt/tampered list must be REFUSED, not silently replayed into a
+  // nonsense board: `ok` is false at the first bad token and the grid freezes
+  // at the last good position. Callers MUST honor `ok` — a corrupt history is
+  // not a valid position and must not accept or offer moves (mirrors
+  // checkers.js's replay contract).
+  function replay(state) {
     const grid = [];
     for (let r = 0; r < N; r++) grid.push(new Array(N).fill(0));
     const moves = (state && state.moves) || [];
+    let won = false;
     for (let i = 0; i < moves.length; i++) {
+      const color = i % 2 === 0 ? "w" : "b";
+      if (won) return { grid, turn: color, ok: false }; // token after a completed win
       const p = parseSquare(moves[i]);
-      if (!p) continue; // defensive; well-formed states never hit this
-      grid[p.row][p.col] = i % 2 === 0 ? "w" : "b";
+      if (!p) return { grid, turn: color, ok: false }; // malformed / off-board token
+      if (grid[p.row][p.col]) return { grid, turn: color, ok: false }; // occupied cell
+      grid[p.row][p.col] = color;
+      // Incremental win check: only a line THROUGH the just-placed stone can
+      // complete a five, so validation stays cheap even on long games.
+      if (fiveThrough(grid, p.row, p.col, color)) won = true;
     }
-    return grid;
+    return { grid, turn: moves.length % 2 === 0 ? "w" : "b", ok: true };
   }
 
   // Four line directions (as row/col deltas): horizontal, vertical, and the two
@@ -128,7 +147,7 @@
   }
 
   function view(state) {
-    const grid = board(state);
+    const grid = replay(state).grid; // renders the position up to the divergence
     const rows = [];
     for (let r = 0; r < N; r++) {
       const row = [];
@@ -142,18 +161,20 @@
   }
 
   // White plays even move indices, Black odd, so the side to move is determined
-  // by the move count's parity.
+  // by the move count's parity. Read off replay() so a corrupt history reports
+  // the side to move at the freeze point (parity of the valid prefix), exactly
+  // like checkers.
   function turn(state) {
-    const n = ((state && state.moves) || []).length;
-    return n % 2 === 0 ? "w" : "b";
+    return replay(state).turn;
   }
 
   // ALL empty intersections are legal placements for the side to move (empty once
   // the game is over — no moves after termination). Order: row-major, top-left
   // first, so the list is deterministic.
   function legalMoves(state) {
+    const { grid, ok } = replay(state);
+    if (!ok) return []; // corrupt history: no move is offered
     if (terminal(state).over) return [];
-    const grid = board(state);
     const out = [];
     for (let r = 0; r < N; r++) {
       for (let c = 0; c < N; c++) {
@@ -166,10 +187,11 @@
   // Placement form of legalMovesFrom: [sq] if placing at sq is legal for the side
   // to move, else []. (A single-click game asks "can I place here?" per cell.)
   function legalMovesFrom(state, sq) {
+    const { grid, ok } = replay(state);
+    if (!ok) return []; // corrupt history: no move is offered
     if (terminal(state).over) return [];
     const p = parseSquare(sq);
     if (!p) return [];
-    const grid = board(state);
     return grid[p.row][p.col] ? [] : [sq];
   }
 
@@ -184,11 +206,12 @@
   // "no moves after game over" here — the module is the source of truth for every
   // client and the transport, not only the renderer.
   function applyMove(state, from, to) {
+    const { grid, ok } = replay(state);
+    if (!ok) return null; // corrupt history: refuse to extend a bogus base
     if (terminal(state).over) return null;
     if (from !== to) return null; // placement moves are single-cell
     const p = parseSquare(to);
     if (!p) return null;
-    const grid = board(state);
     if (grid[p.row][p.col]) return null; // intersection already occupied
     return { game: ID, moves: ((state && state.moves) || []).concat([to]) };
   }
@@ -219,7 +242,11 @@
   // classification is self-contained.
   function terminal(state) {
     const moves = (state && state.moves) || [];
-    const grid = board(state);
+    const { grid, ok } = replay(state);
+    // A corrupt/tampered history is not a valid position: report it as not-over
+    // with no winner, and let the apply paths (which also check `ok`) reject any
+    // move against it. We do NOT invent a result from the partial board.
+    if (!ok) return { over: false, corrupt: true };
     const w = winnerOnBoard(grid);
     if (w) return { over: true, result: w };
     if (moves.length >= N * N) return { over: true, result: "draw" };
@@ -238,7 +265,7 @@
   // ~76 chars, comfortably under the 115-char limit. Turn/history are excluded,
   // so two lines reaching the same stones share one key (and one cached image).
   function positionKey(state) {
-    const grid = board(state);
+    const grid = replay(state).grid;
     const bytes = new Uint8Array(57); // ceil(225*2 / 8)
     let bit = 0; // absolute bit index, MSB-first within each byte
     for (let r = 0; r < N; r++) {
