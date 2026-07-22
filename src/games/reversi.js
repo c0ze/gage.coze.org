@@ -100,28 +100,44 @@
     return out;
   }
 
-  // Replay a State's token list into { board, turn }. WHITE MOVES FIRST. Each
-  // token is a square ("d3") — placed for the side to move, flipping every
+  // Replay a State's token list into { board, turn, ok }. WHITE MOVES FIRST.
+  // Each token is a square ("d3") — placed for the side to move, flipping every
   // flanked disc — or the literal "pass", which only flips the turn. Replaying
   // (vs. storing a packed board) keeps reconstruction deterministic and lets a
   // thread rebuilt from move TEXT match one built by clicking.
+  //
+  // EVERY token is validated exactly as applyMove/applyMoveText enforced when
+  // it was recorded: a placement must target an empty on-board square and flip
+  // >= 1 disc, and "pass" is legal ONLY when the side to move truly has no
+  // placement while the opponent still has one (the mustPass condition — so a
+  // pass at a finished position is also refused). States arrive base64-decoded
+  // from URLs (untrusted), so a corrupt/tampered list must be REFUSED, not
+  // silently replayed into a nonsense board: `ok` is false at the first bad
+  // token and the board freezes at the last good position. Callers MUST honor
+  // `ok` — a corrupt history is not a valid position and must not accept or
+  // offer moves (mirrors checkers.js's replay contract).
   function replay(state) {
     const board = freshBoard();
     let turn = "w"; // white = challenger, moves first
     const moves = (state && state.moves) || [];
     for (const tok of moves) {
       if (tok === "pass") {
+        // Legal only when the mover has NO placement and the opponent has one.
+        // (If neither side can place the game is over — no token may follow.)
+        if (legalSquares(board, turn).length) return { board, turn, ok: false };
+        if (!legalSquares(board, other(turn)).length) return { board, turn, ok: false };
         turn = other(turn);
         continue;
       }
       const sq = parseSquare(tok);
-      if (!sq) continue; // ignore malformed tokens defensively
+      if (!sq) return { board, turn, ok: false }; // malformed token
       const flipped = flips(board, sq.row, sq.col, turn);
+      if (!flipped.length) return { board, turn, ok: false }; // occupied or zero-flip
       board[sq.row][sq.col] = turn;
       for (const [r, c] of flipped) board[r][c] = turn;
       turn = other(turn);
     }
-    return { board, turn };
+    return { board, turn, ok: true };
   }
 
   // Every legal placement square (as algebraic tokens) for `color` on `board`.
@@ -157,7 +173,7 @@
   }
 
   function view(state) {
-    const board = replay(state).board;
+    const board = replay(state).board; // renders the position up to the divergence
     const rows = [];
     for (let r = 0; r < SIZE; r++) {
       const row = [];
@@ -176,7 +192,8 @@
 
   // ALL legal placement squares for the side to move (placement convention).
   function legalMoves(state) {
-    const { board, turn: t } = replay(state);
+    const { board, turn: t, ok } = replay(state);
+    if (!ok) return []; // corrupt history: no move is offered
     if (terminal(state).over) return []; // no placements once terminal
     return legalSquares(board, t);
   }
@@ -188,9 +205,12 @@
   }
 
   // true iff the side to move has no legal placement and the game is not over
-  // (the opponent still has a move) — the only legal action is "pass".
+  // (the opponent still has a move) — the only legal action is "pass". Never
+  // true on a corrupt history: an unresolvable token list is refused outright,
+  // not reinterpreted as a stuck side that has to pass.
   function mustPass(state) {
-    if (terminal(state).over) return false;
+    const t = terminal(state);
+    if (t.over || t.corrupt) return false;
     return legalMoves(state).length === 0;
   }
 
@@ -203,16 +223,20 @@
     if (from !== to) return null; // placement moves are single-square
     const parsed = parseSquare(to);
     if (!parsed) return null;
-    const { board, turn: t } = replay(state);
+    const { board, turn: t, ok } = replay(state);
+    if (!ok) return null; // corrupt history: refuse to extend a bogus base
     // Legal only if it flips >= 1 disc.
     if (!flips(board, parsed.row, parsed.col, t).length) return null;
     return { game: ID, moves: ((state && state.moves) || []).concat([to]) };
   }
 
   // moveText(state, sq, sq) -> the placed square token ("d3"), computed against
-  // the position BEFORE the move (kept for signature parity with chess).
+  // the position BEFORE the move (kept for signature parity with chess). Labels
+  // nothing on a corrupt history: no move exists there to describe.
   function moveText(state, from, to) {
-    return from === to && parseSquare(to) ? to : "";
+    if (from !== to || !parseSquare(to)) return "";
+    if (!replay(state).ok) return ""; // corrupt history: refuse like every other path
+    return to;
   }
 
   // Inverse of moveText and the transport entry point. Places at `text` (or
@@ -234,7 +258,11 @@
   // over when NEITHER side has a legal placement (typically a full board or a
   // mutual no-move). result = the color with MORE discs; equal counts = draw.
   function terminal(state) {
-    const board = replay(state).board;
+    const { board, ok } = replay(state);
+    // A corrupt/tampered history is not a valid position: report it as not-over
+    // with no winner, and let the apply paths (which also check `ok`) reject any
+    // move against it. We do NOT invent a result from the partial board.
+    if (!ok) return { over: false, corrupt: true };
     const wCan = legalSquares(board, "w").length > 0;
     const bCan = legalSquares(board, "b").length > 0;
     if (wCan || bCan) return { over: false };
@@ -251,7 +279,8 @@
     if (from !== to) return false;
     const parsed = parseSquare(to);
     if (!parsed) return false;
-    const { board, turn: t } = replay(state);
+    const { board, turn: t, ok } = replay(state);
+    if (!ok) return false; // corrupt history: no move exists to flag
     return flips(board, parsed.row, parsed.col, t).length > 0;
   }
 
