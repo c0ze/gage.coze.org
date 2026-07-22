@@ -158,6 +158,35 @@
     disconnectObserver = null;
   }
 
+  // Reply text = the move token grammar, plus a /g/<seed> share link on X and
+  // Mastodon. On Bluesky the link is OMITTED: bsky counts the RAW URL toward its
+  // 300-grapheme limit (X/Mastodon count links as a flat ~23), and the seed
+  // encodes the whole move list, so link-bearing replies stop fitting around
+  // move 6-8 and Publish silently disables. The link is cosmetic there anyway —
+  // board-inject.js already renders the board inline under each move reply for
+  // extension users on Bluesky, and thread reconstruction only needs the
+  // "[move] #gage" token. stateAfter is the position AFTER the move (the seed
+  // must encode it so its meta.turn matches the reconstructed thread).
+  function buildMoveReplyText(game, decision, moveText, stateAfter) {
+    const text = Gage.protocol.formatMove({
+      gameId: decision.gameId,
+      moveText: moveText,
+      isChallenge: false,
+    });
+    if (Gage.platform === "bluesky") return text;
+    return (
+      text +
+      " " +
+      Gage.gameUrl(
+        Gage.buildShareSeed(game, stateAfter, {
+          w: decision.white,
+          b: decision.black,
+          san: moveText,
+        })
+      )
+    );
+  }
+
   function setupGame(decision) {
     const game = Gage.games[decision.gameId];
     const mount = clearMount();
@@ -190,28 +219,16 @@
       passBtn.title = "You have no legal move — pass the turn";
       passBtn.addEventListener("click", function () {
         // Same reply grammar as onMove, but the move token is the literal "pass".
-        // The share link must encode the state AFTER the pass (turn flipped, board
-        // unchanged) so its meta.turn matches the reconstructed thread — mirror the
-        // normal onMove path, which seeds mv.state (the post-move state). Fall back
-        // to the pre-pass state if applyMoveText is somehow unavailable.
+        // The share link (where present — see buildMoveReplyText) must encode the
+        // state AFTER the pass (turn flipped, board unchanged) so its meta.turn
+        // matches the reconstructed thread — mirror the normal onMove path, which
+        // seeds mv.state (the post-move state). Fall back to the pre-pass state if
+        // applyMoveText is somehow unavailable.
         const afterPass =
           (typeof game.applyMoveText === "function" &&
             game.applyMoveText(decision.state, "pass")) ||
           decision.state;
-        const text =
-          Gage.protocol.formatMove({
-            gameId: decision.gameId,
-            moveText: "pass",
-            isChallenge: false,
-          }) +
-          " " +
-          Gage.gameUrl(
-            Gage.buildShareSeed(game, afterPass, {
-              w: decision.white,
-              b: decision.black,
-              san: "pass",
-            })
-          );
+        const text = buildMoveReplyText(game, decision, "pass", afterPass);
         passBtn.disabled = true;
         mount.style.pointerEvents = "none";
         setStatus("pass posted — press Reply to send");
@@ -250,25 +267,11 @@
           /* uploadBoardImage shouldn't throw synchronously; ignore if it does */
         }
 
-        // Reply text = the move token grammar + a share link to the game page.
-        // The link is ADDITIVE (after "[move] #gage"), so parseMove still reads
-        // the move from the "[...]" slot on the other client. white/black come
-        // from the decision (decide() sets decision.white/decision.black), san is
-        // the move just played.
-        const text =
-          Gage.protocol.formatMove({
-            gameId: decision.gameId,
-            moveText: mv.text,
-            isChallenge: false,
-          }) +
-          " " +
-          Gage.gameUrl(
-            Gage.buildShareSeed(game, mv.state, {
-              w: decision.white,
-              b: decision.black,
-              san: mv.text,
-            })
-          );
+        // Reply text = the move token grammar + (on X/Mastodon) a share link to
+        // the game page. The link is ADDITIVE (after "[move] #gage"), so parseMove
+        // still reads the move from the "[...]" slot on the other client; on
+        // Bluesky it's dropped entirely — see buildMoveReplyText for why.
+        const text = buildMoveReplyText(game, decision, mv.text, mv.state);
         // Freeze further local input until the thread confirms our move.
         mount.style.pointerEvents = "none";
         setStatus("your move " + mv.text + " posted — press Reply to send");
@@ -421,6 +424,25 @@
     //     fixed bounded window until the new DOM has replaced the old, ending on
     //     the settled thread. refresh() re-decides from the live DOM each call and
     //     tears down the prior observer, so the interim re-reads are safe.
+    // Late-hydration tail: the fixed settle window above covers the normal
+    // hydration race, but a slow thread (cold cache, big thread, slow Mastodon
+    // instance) can hydrate AFTER it — the page would be decided "not a game"
+    // and nothing would ever re-check until the next URL change. So when a
+    // settle window ends UNRECOGNIZED, keep polling at a gentler 1s cadence for
+    // ~12s more (≈15s total from a nav), stopping the moment a game is
+    // recognized — from there the observer drives updates as usual. Shares
+    // settleTimer with settle() so a new nav (or re-settle) always replaces the
+    // tail instead of stacking a second loop. On a genuinely non-game page this
+    // is a handful of cheap no-op re-reads and then silence.
+    function settleLate() {
+      let n = 0;
+      const maxTicks = 12; // ~12s at 1s ticks
+      settleTimer = setInterval(function () {
+        if (panelActive) { clearInterval(settleTimer); settleTimer = null; return; }
+        refresh(true);
+        if (++n >= maxTicks) { clearInterval(settleTimer); settleTimer = null; }
+      }, 1000);
+    }
     function settle(canEarlyStop) {
       if (settleTimer) clearInterval(settleTimer);
       let n = 0;
@@ -429,7 +451,13 @@
       settleTimer = setInterval(function () {
         if (canEarlyStop && panelActive) { clearInterval(settleTimer); settleTimer = null; return; }
         refresh(true); // the observer to the CURRENT container as the thread hydrates/swaps
-        if (++n >= maxTicks) { clearInterval(settleTimer); settleTimer = null; }
+        if (++n >= maxTicks) {
+          clearInterval(settleTimer);
+          settleTimer = null;
+          // Window over and still not a game? Hand off to the gentle tail —
+          // a late-hydrating thread gets picked up instead of staying blank.
+          if (!panelActive) settleLate();
+        }
       }, 400);
     }
     // Initial mount settles WITH early-stop (no prior thread to get stuck on), so a
@@ -449,6 +477,36 @@
         settle(false); // ride through X's URL-before-DOM swap; no stale early-stop
       }
     }, 500);
+    // Observer-death heartbeat. The MutationObserver anchors to the container
+    // element captured at subscribe time; if the platform re-mounts that
+    // container WITHOUT a URL change (Mastodon stream reconnect, X error-retry
+    // re-mount), the observer watches a detached node forever and opponent moves
+    // stop arriving — manual ↻ was the only recovery. Adapters expose the node
+    // they observed on the disconnect handle (.root); when it falls out of the
+    // document, tear down and force a refresh, which re-reads the live DOM and
+    // re-subscribes to the CURRENT container. Low frequency on purpose: a
+    // detached observer costs nothing while it waits, so 4s of lag is fine. No
+    // false positives: a healthy root stays isConnected, and the document.body
+    // fallback roots are always connected.
+    setInterval(function () {
+      if (
+        panelActive &&
+        disconnectObserver &&
+        disconnectObserver.root &&
+        !disconnectObserver.root.isConnected
+      ) {
+        teardownObserver();
+        refresh(true); // re-render + re-observe against the re-mounted container
+        // A remount can leave a GAP: the old container is gone but the new one
+        // hasn't mounted yet, so the refresh above decides "not a game", flips
+        // panelActive false, and this heartbeat's own guard would then never
+        // retry — the panel stays dead with no URL change to rescue it. Hand
+        // off to the same bounded 1s tail a slow post-nav hydration uses, so
+        // the replacement container gets picked up when it lands. Guarded on
+        // settleTimer so we never stack a second loop on a live settle.
+        if (!panelActive && !settleTimer) settleLate();
+      }
+    }, 4000);
   }
 
   if (document.readyState === "loading") {

@@ -451,11 +451,13 @@
       attributeFilter: ["href"],
       characterData: true,
     });
-    return function disconnect() {
+    function disconnect() {
       stopped = true;
       mo.disconnect();
       if (timer) { clearTimeout(timer); timer = null; }
-    };
+    }
+    disconnect.root = root; // exposed so content.js's heartbeat can spot a detached (re-mounted) container
+    return disconnect;
   }
 
   Gage.transports.mastodon = {
