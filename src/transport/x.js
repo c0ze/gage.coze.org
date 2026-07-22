@@ -38,6 +38,11 @@
   const SEL = {
     container: 'div[aria-label^="Timeline:"]',
     article: 'article[data-testid="tweet"]',
+    cell: '[data-testid="cellInnerDiv"]',
+    // X renders the "Discover more" / "More replies" section header as a level-2
+    // heading inside its own cell. Matched STRUCTURALLY (h2 / role+aria-level),
+    // never by localized text.
+    sectionHeading: 'h2, [role="heading"][aria-level="2"]',
     tweetText: '[data-testid="tweetText"]',
     statusLink: 'a[href*="/status/"]',
     reply: '[data-testid="reply"]',
@@ -55,6 +60,36 @@
   const AUTO_SEND = false;
 
   const container = () => document.querySelector(SEL.container) || document.body;
+
+  // threadArticles() -> the CONVERSATION's tweet articles, in DOM order, CUT at
+  // X's appended recommendation section ("Discover more"). The conversation
+  // timeline holds one cellInnerDiv per row; after the real thread X appends a
+  // section-header cell (a level-2 heading) followed by recommended tweets from
+  // strangers. Reading those as thread posts polluted the move list and made
+  // postReply target a stranger's tweet. So: walk the cells in order and STOP at
+  // the first heading cell that appears AFTER at least one tweet — everything
+  // beyond it is recommendations, not the thread. (The "after at least one
+  // tweet" guard means a heading-first layout can't cut the thread to zero.)
+  // Falls back to all articles if X's cell markup ever disappears.
+  function threadArticles() {
+    const root = container();
+    const cells = Array.from(root.querySelectorAll(SEL.cell));
+    if (!cells.length) return Array.from(root.querySelectorAll(SEL.article));
+    const out = [];
+    let sawTweet = false;
+    for (const cell of cells) {
+      if (sawTweet && cell.querySelector(SEL.sectionHeading)) break;
+      const arts = cell.querySelectorAll(SEL.article);
+      if (arts.length) {
+        sawTweet = true;
+        out.push.apply(out, Array.from(arts));
+      }
+    }
+    // Cells exist but no article was inside any of them (markup drift): fall
+    // back to the raw article scan rather than reading an empty thread.
+    if (!out.length) return Array.from(root.querySelectorAll(SEL.article));
+    return out;
+  }
 
   function statusIdOf(article) {
     const href = Array.from(article.querySelectorAll(SEL.statusLink))
@@ -96,22 +131,28 @@
     return a ? handleFromHref(a.getAttribute("href")) : null;
   }
 
-  // getRootAuthorHandle() -> string|null. The author of the FIRST tweet in the
-  // thread (the root / challenge), lowercased, no "@"/"/". On a conversation page
-  // the first article is the root; its User-Name block's first profile link is
-  // the author. null if no tweet is present yet.
-  function getRootAuthorHandle() {
-    const root = container().querySelector(SEL.article);
-    if (!root) return null;
+  // authorHandleOf(article) -> string|null. The tweet's author handle,
+  // lowercased, no "@"/"/". Reads the article's User-Name block's first profile
+  // link. null when the block is missing / not hydrated — callers treat null as
+  // "unreadable", never as a different author.
+  function authorHandleOf(article) {
     // No author block -> unknown. Do NOT fall back to the whole article: an
-    // embedded / quoted tweet inside the root would inject a wrong profile link.
-    const nameBlock = root.querySelector(SEL.userName);
+    // embedded / quoted tweet inside it would inject a wrong profile link.
+    const nameBlock = article.querySelector(SEL.userName);
     if (!nameBlock) return null;
     const link = Array.from(nameBlock.querySelectorAll('a[href^="/"]'))
       .map((x) => x.getAttribute("href"))
       // Skip in-tweet links that aren't the author profile (status/photo/etc.).
       .find((h) => h && !/\/(status|photo|search|hashtag|i)\b/.test(h));
     return handleFromHref(link);
+  }
+
+  // getRootAuthorHandle() -> string|null. The author of the FIRST tweet in the
+  // thread (the root / challenge). On a conversation page the first article is
+  // the root. null if no tweet is present yet.
+  function getRootAuthorHandle() {
+    const root = threadArticles()[0];
+    return root ? authorHandleOf(root) : null;
   }
 
   // Poll until getter() returns truthy or we time out (X renders async).
@@ -131,15 +172,49 @@
 
   // readThreadMoves() -> string[]  RAW tweet texts, thread order (root first).
   function readThreadMoves() {
-    return Array.from(container().querySelectorAll(SEL.article)).map(tweetTextOf);
+    return threadArticles().map(tweetTextOf);
   }
 
-  // postReply(text) -> Promise. Opens a reply to the LATEST tweet in the thread
-  // and fills `text` into the DraftJS editor; clicks send only if AUTO_SEND.
-  // Rejects (does not swallow) so the UI can surface a failure.
+  // readThreadPosts() -> [{ text, author }]  same tweets as readThreadMoves, plus
+  // each tweet's author handle (lowercased) or null when unreadable. The
+  // orchestration uses the author to accept only the right player's moves.
+  function readThreadPosts() {
+    return threadArticles().map((a) => ({
+      text: tweetTextOf(a),
+      author: authorHandleOf(a),
+    }));
+  }
+
+  // The reply target: the post carrying the LAST ACCEPTED move — the same
+  // authorship-gated pick the decision layer makes (orchestration.
+  // lastAcceptedMoveIndex), so an outsider's skipped "[e5] #gage" can never
+  // become the parent of the next legitimate move. Fallbacks, in order: the
+  // last post whose text merely parses as a move (orchestration not loaded),
+  // then the last post (nothing parses / protocol not loaded).
+  function lastGamePost(nodes, textOf, authorOf) {
+    const orch = Gage.orchestration;
+    if (orch && orch.lastAcceptedMoveIndex) {
+      const idx = orch.lastAcceptedMoveIndex(
+        nodes.map((n) => ({ text: textOf(n), author: authorOf(n) }))
+      );
+      if (idx >= 0) return nodes[idx];
+    }
+    const protocol = Gage.protocol;
+    if (protocol && protocol.parseMove) {
+      for (let i = nodes.length - 1; i >= 0; i--) {
+        if (protocol.parseMove(textOf(nodes[i]))) return nodes[i];
+      }
+    }
+    return nodes.length ? nodes[nodes.length - 1] : null;
+  }
+
+  // postReply(text) -> Promise. Opens a reply to the LAST GAME POST in the
+  // thread (fallback: latest tweet) and fills `text` into the DraftJS editor;
+  // clicks send only if AUTO_SEND. Rejects (does not swallow) so the UI can
+  // surface a failure.
   async function postReply(text) {
-    const arts = Array.from(container().querySelectorAll(SEL.article));
-    const target = arts[arts.length - 1]; // newest tweet keeps the chain nested
+    const arts = threadArticles();
+    const target = lastGamePost(arts, tweetTextOf, authorHandleOf); // last ACCEPTED move keeps the chain nested under the game
     if (!target) throw new Error("[gage] postReply: no tweet to reply to");
     const replyBtn = target.querySelector(SEL.reply);
     if (!replyBtn) throw new Error("[gage] postReply: no reply control on target tweet");
@@ -177,7 +252,13 @@
   //   (b) watch childList + attributes(href) + characterData so hydration
   //       triggers a rescan;
   //   (c) only record/emit once an article has an id AND non-empty text — the
-  //       rest are retried on later mutations.
+  //       rest are retried on later mutations. The AUTHOR may still be
+  //       unhydrated at emit time; the decision layer trusts author:null moves
+  //       (hydration tolerance), so content.js schedules a bounded re-read
+  //       whenever a move-shaped post is read with a null author — that re-read
+  //       is what picks up the late-hydrating author. The observer deliberately
+  //       does NOT gate on the author: a page whose author markup never resolves
+  //       (selector rot) must keep nudging rather than go silent.
   // Scans are coalesced and cancelled on disconnect so nothing fires after
   // unsubscribe. NOTE: treat this as a "thread changed" nudge — the orchestration
   // should re-read via readThreadMoves()+reconstruct() as the source of truth
@@ -231,6 +312,7 @@
   Gage.transports = Gage.transports || {};
   Gage.transports.x = {
     readThreadMoves,
+    readThreadPosts,
     postReply,
     observe,
     getMyHandle,

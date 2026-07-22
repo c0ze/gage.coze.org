@@ -129,7 +129,15 @@
   function readContext() {
     const tt = Gage.threadTransport;
     return {
-      rawTexts: tt && tt.readThreadMoves ? tt.readThreadMoves() : [],
+      // Prefer readThreadPosts ({text, author} pairs) so decide() can gate each
+      // move by its author; fall back to the legacy text-only read (decide()
+      // accepts both shapes — string items are treated as author-unknown).
+      rawPosts:
+        tt && tt.readThreadPosts
+          ? tt.readThreadPosts()
+          : tt && tt.readThreadMoves
+            ? tt.readThreadMoves()
+            : [],
       me: tt && tt.getMyHandle ? tt.getMyHandle() : null,
       rootAuthor: tt && tt.getRootAuthorHandle ? tt.getRootAuthorHandle() : null,
     };
@@ -307,6 +315,40 @@
       d.myColor, d.status].join("|");
   }
 
+  // ---- late-author correction -------------------------------------------
+  // The decision layer TRUSTS a move-shaped post whose author is null (adapters
+  // return null while the author block hasn't hydrated — and legacy input has no
+  // authors at all). A post can hydrate its TEXT before its AUTHOR, so a read in
+  // that window may accept a move the fully-hydrated read would skip (e.g. an
+  // outsider's "[e5] #gage") — and nothing on the page is guaranteed to mutate
+  // again to trigger the corrective re-read. So: whenever a game-mode read
+  // contains a move-shaped post with a null author, schedule a bounded series of
+  // delayed refreshes until the thread reads fully attributed (or we give up —
+  // a page whose author markup NEVER resolves is the legacy trust-all mode by
+  // design, not an error). Counter resets on navigation.
+  let authorRetryTimer = null;
+  let authorRetries = 0;
+  const AUTHOR_RETRY_MS = 700;
+  const AUTHOR_RETRY_MAX = 6; // ~4s of grace — hydration is fast when it happens
+  function hasUnattributedMove(rawPosts) {
+    const protocol = Gage.protocol;
+    if (!protocol || !protocol.parseMove || !Array.isArray(rawPosts)) return false;
+    return rawPosts.some(function (p) {
+      return (
+        p != null && typeof p === "object" && p.author == null &&
+        typeof p.text === "string" && !!protocol.parseMove(p.text)
+      );
+    });
+  }
+  function scheduleAuthorRetry() {
+    if (authorRetryTimer || authorRetries >= AUTHOR_RETRY_MAX) return;
+    authorRetries++;
+    authorRetryTimer = setTimeout(function () {
+      authorRetryTimer = null;
+      refresh(); // unforced: only re-renders if the re-read actually changed things
+    }, AUTHOR_RETRY_MS);
+  }
+
   // force=true always (re)renders — used by the settle loop (initial mount + nav,
   // which must re-establish the board + re-attach the observer to the CURRENT
   // container) and by postReply failure-recovery (restore). force=false is the
@@ -316,10 +358,15 @@
     const ctx = readContext();
     const decision =
       Gage.orchestration && Gage.orchestration.decide
-        ? Gage.orchestration.decide(ctx.rawTexts, { me: ctx.me, rootAuthor: ctx.rootAuthor })
+        ? Gage.orchestration.decide(ctx.rawPosts, { me: ctx.me, rootAuthor: ctx.rootAuthor })
         : { isGame: false };
     if (decision.isGame && Gage.games[decision.gameId]) {
       panelActive = true;
+      // A move-shaped post read before its author hydrated? Re-read shortly —
+      // the fully-attributed read may skip it (authorship gate). Bounded; see
+      // the late-author correction block above.
+      if (hasUnattributedMove(ctx.rawPosts)) scheduleAuthorRetry();
+      else authorRetries = 0; // fully attributed — reset the grace budget
       // Re-render ONLY when the reconstructed game changed (or the board isn't
       // mounted yet). This turns a spurious observer fire into a no-op instead of a
       // board-wiping rebuild — the key to two-click games (checkers) and un-posted
@@ -397,6 +444,8 @@
         uiDismissed = false;
         uiCollapsed = false;
         lastRenderSig = null; // new thread: force a fresh render
+        authorRetries = 0; // new thread: fresh late-author grace budget
+        if (authorRetryTimer) { clearTimeout(authorRetryTimer); authorRetryTimer = null; }
         settle(false); // ride through X's URL-before-DOM swap; no stale early-stop
       }
     }, 500);

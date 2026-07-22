@@ -6,7 +6,12 @@
 // (`me` = logged-in user, `rootAuthor` = author of the root tweet), it decides
 // everything content.js needs to render one frame of a Gage game:
 //
-//   Gage.orchestration.decide(rawTexts, { me, rootAuthor }) -> Decision
+//   Gage.orchestration.decide(rawPosts, { me, rootAuthor }) -> Decision
+//
+//   rawPosts: EITHER string[] (legacy — raw post texts, author unknown) OR
+//   { text, author }[] where author is the post's lowercased handle or null
+//   when the DOM couldn't read it (adapters' readThreadPosts()). Authorship
+//   gates which posts count as MOVES (see AUTHORSHIP below).
 //
 //   Decision = {
 //     isGame     : boolean   the thread's ROOT parses to a #gage move with a
@@ -14,7 +19,10 @@
 //     gameId     : string|null   the declared game ("chess"), or null if not a game.
 //     white      : string|null   WHITE handle == rootAuthor (challenger), lowercased.
 //     black      : string|null   BLACK handle == first @mention in the ROOT text
-//                                 that isn't the root author, lowercased.
+//                                 that isn't the root author, lowercased — REFINED
+//                                 to the exact handle of the player who actually
+//                                 claimed/locked the side once they have moved
+//                                 (see collectMovePosts' identity locks).
 //     me         : string|null   echo of the caller's `me` (lowercased).
 //     myColor    : "w"|"b"|null  my side, or null when I'm a spectator.
 //     state      : State|null    the reconstructed position (last-good on desync).
@@ -111,9 +119,111 @@
     return handle ? "@" + handle : fallback;
   }
 
-  // decide(rawTexts, { me, rootAuthor }) -> Decision  (see header).
-  function decide(rawTexts, ids) {
-    const texts = Array.isArray(rawTexts) ? rawTexts : [];
+  // Normalize decide()'s input: a string item is a bare text (legacy adapters /
+  // callers — author unknown), an object item is { text, author } from
+  // readThreadPosts(). Anything malformed degrades to empty-text/null-author so
+  // a half-hydrated post can never throw here.
+  function normalizePosts(rawPosts) {
+    const items = Array.isArray(rawPosts) ? rawPosts : [];
+    return items.map(function (it) {
+      if (typeof it === "string") return { text: it, author: null };
+      if (it && typeof it === "object") {
+        return {
+          text: typeof it.text === "string" ? it.text : "",
+          author: norm(it.author),
+        };
+      }
+      return { text: "", author: null };
+    });
+  }
+
+  // AUTHORSHIP: collect the thread's MOVE list, gated by who posted each move.
+  // Sides strictly alternate — the Nth accepted move belongs to white when N is
+  // even (white == rootAuthor posts the root move), black when odd.
+  //
+  // Each side has an identity LOCK — the exact author string the side is pinned
+  // to. WHITE locks to the root author from the start: rootAuthor and every
+  // per-post author come from the SAME adapter helper, so the rightful white
+  // player always reads as the identical string, and a federated lookalike
+  // ("alice@evil.example" impersonating local "alice") fails the exact test —
+  // handleMatch's bare-vs-qualified bridge is deliberately NOT honored on a
+  // locked side. BLACK starts unlocked with only the root MENTION to go by
+  // (possibly a short form like "@gand-tr" for "gand-tr.bsky.social"): the
+  // first READABLE author that handleMatches the mention claims the side and
+  // locks it, so from then on lookalikes are rejected exactly too. When a side
+  // has no mention at all (no rival resolved), the first readable poster of
+  // that side's slot claims it.
+  //
+  // A post that parses as a move is accepted only if:
+  //   (a) its author is null — the DOM couldn't read it (legacy string[] input,
+  //       or a hydration gap). Trusting these keeps old threads / half-loaded
+  //       pages replayable (pre-authorship behavior); such a move never locks
+  //       or re-keys a side; or
+  //   (b) its side is LOCKED and the author is exactly the locked string; or
+  //   (c) its side is unlocked and the author handleMatches the side's mention
+  //       (or the side has no mention) — the author then locks the side.
+  // Anything else — a bystander's "[e5] #gage", troll bracketed chatter, the
+  // same player posting twice in a row — is SKIPPED as chatter, NOT a desync:
+  // the game simply doesn't see it.
+  //
+  // Residual (documented) limit: when the challenge mentions a BARE handle, the
+  // FIRST black move is the only slot a lookalike could claim (the short form
+  // can't pin an instance); a full-handle mention closes even that.
+  //
+  // collectMovePosts returns { moves: [{ index, moveText, author }], locks:
+  // { w, b } } — moves so callers can recover WHICH post carries the last
+  // accepted move (reply targeting), locks so decide() can refine the sides to
+  // the players who ACTUALLY own them (e.g. black resolved from a short mention
+  // to the full handle of the player who claimed the side, or a side with no
+  // mention at all claimed by its first poster).
+  function collectMovePosts(posts, protocol, white, black) {
+    const out = [];
+    const lock = { w: white != null ? String(white) : null, b: null };
+    const mention = { w: white, b: black };
+    for (let i = 0; i < posts.length; i++) {
+      const parsed = protocol.parseMove(posts[i].text);
+      if (!parsed) continue; // not a move-shaped post at all
+      const side = out.length % 2 === 0 ? "w" : "b";
+      const author = posts[i].author;
+      if (author != null) {
+        if (lock[side] != null) {
+          if (author !== lock[side]) continue; // locked side: exact author only
+        } else if (mention[side] != null) {
+          if (!handleMatch(author, mention[side])) continue; // wrong player
+          lock[side] = author; // first readable rightful owner pins the side
+        } else {
+          lock[side] = author; // no mention to check — first readable poster claims it
+        }
+      }
+      out.push({ index: i, moveText: parsed.moveText, author: author });
+    }
+    return { moves: out, locks: lock };
+  }
+
+  function collectMoveTexts(posts, protocol, white, black) {
+    return collectMovePosts(posts, protocol, white, black).moves.map(function (p) {
+      return p.moveText;
+    });
+  }
+
+  // lastAcceptedMoveIndex(rawPosts) -> index (into rawPosts) of the LAST post
+  // accepted as a move under the same authorship gate decide() uses, or -1.
+  // The DOM adapters use this to pick the REPLY TARGET, so a skipped outsider's
+  // "[e5] #gage" can never become the parent of the next legitimate move (which
+  // would fork the chain / redirect notifications to the outsider).
+  function lastAcceptedMoveIndex(rawPosts) {
+    const protocol = Gage.protocol;
+    const posts = normalizePosts(rawPosts);
+    if (!protocol || !protocol.parseMove || !posts.length) return -1;
+    const white = posts[0].author;
+    const black = firstRivalMention(posts[0].text, white);
+    const accepted = collectMovePosts(posts, protocol, white, black).moves;
+    return accepted.length ? accepted[accepted.length - 1].index : -1;
+  }
+
+  // decide(rawPosts, { me, rootAuthor }) -> Decision  (see header).
+  function decide(rawPosts, ids) {
+    const posts = normalizePosts(rawPosts);
     ids = ids || {};
     const me = norm(ids.me);
     // WHITE is the root author. Prefer the caller-supplied rootAuthor (the DOM
@@ -145,30 +255,45 @@
 
     if (!protocol || !reconstruct) return base;
 
-    const rootText = texts.length ? texts[0] : "";
+    const rootText = posts.length ? posts[0].text : "";
     const rootParse = protocol.parseMove(rootText);
 
     // GAME MODE gate: the ROOT must parse to a #gage move that DECLARES a known
     // game (a challenge carries "#chess"). A reply-shaped root (no gameId) or a
-    // non-Gage root is not a game thread we can host.
+    // non-Gage root is not a game thread we can host. (The root's author IS
+    // rootAuthor by construction — the DOM layer reads both off the same first
+    // post — so no separate root-authorship check is needed here.)
     const gameId = rootParse && rootParse.gameId ? rootParse.gameId : null;
     const game = gameId ? games[gameId] : null;
     if (!rootParse || !gameId || !game) return base;
 
-    // The thread IS the move list: parse every tweet to its move token, drop
-    // chatter / non-Gage tweets, then replay to the current position.
-    const moveTexts = texts
-      .map((t) => protocol.parseMove(t))
-      .filter(Boolean)
-      .map((p) => p.moveText);
+    // Sides. WHITE = root author (challenger); BLACK = first @mention in the ROOT
+    // text that isn't the root author. Resolved BEFORE collecting moves because
+    // authorship gating needs to know whose turn each move slot belongs to.
+    const blackMention = firstRivalMention(rootText, white);
+
+    // The thread IS the move list: walk the posts in order, keep only the moves
+    // posted by the RIGHT player for each alternating slot (see collectMovePosts),
+    // then replay to the current position.
+    const collected = collectMovePosts(posts, protocol, white, blackMention);
+    const moveTexts = collected.moves.map(function (p) { return p.moveText; });
     const rebuilt = reconstruct(game, moveTexts);
     const state = rebuilt && rebuilt.state ? rebuilt.state : game.initialState();
     const error = (rebuilt && rebuilt.error) || null;
 
-    // Sides. WHITE = root author (challenger); BLACK = first @mention in the ROOT
-    // text that isn't the root author.
-    const black = firstRivalMention(rootText, white);
-    const myColor = me && handleMatch(me, white) ? "w" : me && handleMatch(me, black) ? "b" : null;
+    // REFINE the sides with the identity locks learned while collecting: the
+    // lock is the exact author string of the player ACTUALLY posting a side's
+    // moves — the mention may be a short form ("gand-tr" for the full
+    // "gand-tr.bsky.social"), absent entirely (black claimed by its first
+    // poster), or, once a rightful player has locked the side, more specific
+    // than the mention (so a federated lookalike of a bare mention no longer
+    // handleMatches into myColor/interactivity). Fall back to the raw
+    // rootAuthor/mention when a side never locked (e.g. no moves yet).
+    const whiteId = collected.locks.w != null ? collected.locks.w : white;
+    const black = collected.locks.b != null ? collected.locks.b : blackMention;
+
+    const myColor =
+      me && handleMatch(me, whiteId) ? "w" : me && handleMatch(me, black) ? "b" : null;
 
     // Turn / termination read off the (last-good) reconstructed state.
     let turn = null;
@@ -186,7 +311,7 @@
 
     // Interactive ONLY when it's my legal turn on a clean, unfinished game.
     const interactive = !!myColor && !error && !over && turn === myColor;
-    const opponent = myColor === "w" ? black : myColor === "b" ? white : null;
+    const opponent = myColor === "w" ? black : myColor === "b" ? whiteId : null;
 
     const status = statusFor({
       error: error,
@@ -194,7 +319,7 @@
       result: result,
       myColor: myColor,
       turn: turn,
-      white: white,
+      white: whiteId,
       black: black,
       opponent: opponent,
     });
@@ -202,7 +327,7 @@
     return {
       isGame: true,
       gameId: gameId,
-      white: white,
+      white: whiteId,
       black: black,
       me: me,
       myColor: myColor,
@@ -249,5 +374,10 @@
     // exposed for tests / reuse:
     mentionsOf: mentionsOf,
     firstRivalMention: firstRivalMention,
+    handleMatch: handleMatch,
+    collectMovePosts: collectMovePosts,
+    collectMoveTexts: collectMoveTexts,
+    lastAcceptedMoveIndex: lastAcceptedMoveIndex,
+    normalizePosts: normalizePosts,
   };
 })();
