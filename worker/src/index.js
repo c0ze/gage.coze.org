@@ -28,6 +28,8 @@
 // card (never a 500), and a missing image yields a short-cached placeholder
 // PNG (never a 500) so a not-yet-uploaded position isn't pinned by CDN caches.
 
+import { validatePng } from "./png.js";
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -168,10 +170,13 @@ function json(obj, status, extraHeaders) {
 // this Worker, and both PUT board images here. So /img/* is intentionally open:
 // permissive CORS + first-write-wins as the integrity guard (see PUT below).
 //
-// NOTE: uploads are best-effort and low-stakes (a cached board image). If this
-// ever needs hardening, the upload could require an HMAC-signed key/body (the
-// extension and site share a secret; the Worker verifies) instead of relying
-// on first-write-wins. Left permissive on purpose for v1.
+// NOTE: uploads are best-effort and low-stakes (a cached board image). The PUT
+// path validates the ACTUAL bytes (PNG signature + IHDR, see src/png.js) and
+// size before storing, which blocks arbitrary-content smuggling — but it does
+// NOT authenticate the uploader. Full anti-poisoning would need authenticated
+// uploads (an HMAC-signed key/body — the extension and site share a secret;
+// the Worker verifies) plus rate limiting via KV or a Durable Object.
+// Acknowledged, out of scope for v1; left permissive on purpose.
 const CORS_HEADERS = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET, HEAD, PUT, OPTIONS",
@@ -447,6 +452,11 @@ async function handleImagePut(env, key, request) {
   // A position is content-addressed by `key`, so the first correct upload is
   // authoritative; refusing later writes prevents cache-poisoning an existing
   // board with different bytes. Return 200 {skipped:true} — a no-op success.
+  // KNOWN LIMIT: head-then-put is not atomic — two uploads racing the same key
+  // can both pass the head() and the later put wins. Both writers render the
+  // same position (same key), and the PNG validation below bounds what any
+  // writer can store, so the race is accepted for now; a conditional put (R2
+  // onlyIf) or HMAC-authenticated uploads would close it properly.
   const existing = await env.BUCKET.head(key);
   if (existing) {
     return json({ skipped: true }, 200, { "access-control-allow-origin": "*" });
@@ -460,11 +470,45 @@ async function handleImagePut(env, key, request) {
     });
   }
 
-  // Read the body once as bytes so we can length-check it precisely (a
-  // content-length header alone is spoofable / may be absent for streams).
+  // Content-length pre-check BEFORE reading the body, so an oversized upload
+  // is rejected without buffering it into memory first. The extension PUTs
+  // canvas.toBlob PNGs via fetch, which always sends a fixed-length body with
+  // a Content-Length header — so requiring the header (411 when absent, per
+  // spec) never rejects a legitimate upload; it only stops chunked/streamed
+  // bodies of unknown size.
+  const declaredLength = request.headers.get("content-length");
+  if (declaredLength === null || !/^\d{1,15}$/.test(declaredLength.trim())) {
+    return json({ error: "content-length required" }, 411, {
+      "access-control-allow-origin": "*",
+    });
+  }
+  if (Number(declaredLength) >= MAX_IMAGE_BYTES) {
+    return json({ error: "png body must be 1..262143 bytes" }, 413, {
+      "access-control-allow-origin": "*",
+    });
+  }
+
+  // Read the body once as bytes and length-check the ACTUAL size too — the
+  // content-length header alone is spoofable, so the pre-check above is a
+  // fast-fail and this is the belt-and-suspenders truth.
   const body = new Uint8Array(await request.arrayBuffer());
-  if (body.byteLength === 0 || body.byteLength >= MAX_IMAGE_BYTES) {
-    return json({ error: "png body must be 1..262143 bytes" }, 400, {
+  if (body.byteLength >= MAX_IMAGE_BYTES) {
+    return json({ error: "png body must be 1..262143 bytes" }, 413, {
+      "access-control-allow-origin": "*",
+    });
+  }
+  if (body.byteLength === 0) {
+    return json({ error: "empty body" }, 400, {
+      "access-control-allow-origin": "*",
+    });
+  }
+
+  // Validate the ACTUAL bytes, not just the claimed type: first-write-wins +
+  // the immutable cache would pin poisoned content forever, so anything that
+  // isn't structurally a PNG with sane board dimensions is refused (415).
+  const png = validatePng(body);
+  if (!png.ok) {
+    return json({ error: "body is not a valid png: " + png.reason }, 415, {
       "access-control-allow-origin": "*",
     });
   }
