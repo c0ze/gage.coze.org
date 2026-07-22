@@ -45,8 +45,13 @@
   color-scheme: light dark;
 }
 
+/* Dark palette. Two ways in, kept identical:
+ *   (a) OS prefers dark AND the user has NOT chosen a theme (:not([data-theme]))
+ *   (b) the theme toggle set data-theme="dark"
+ * data-theme="light" needs no block — the base :root above is already light, and
+ * the media rule below is scoped to :not([data-theme]) so it can't re-darken it. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme]) {
     --bg: #0e1110;
     --surface: #161a18;
     --surface-2: #1b201d;
@@ -59,6 +64,49 @@
     --on-accent: #0e1110;
     /* board + last-move unchanged */
   }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1110;
+  --surface: #161a18;
+  --surface-2: #1b201d;
+  --border: #272d29;
+  --text: #e9ece8;
+  --muted: #98a29b;
+  --accent: #63b06b;
+  --accent-strong: #7cc084;
+  --accent-tint: #18241b;
+  --on-accent: #0e1110;
+  color-scheme: dark;
+}
+:root[data-theme="light"] { color-scheme: light; }
+
+/* ---- theme toggle (top bar) ---- */
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color .15s ease, background .15s ease, transform .08s ease;
+}
+.theme-toggle:hover { border-color: var(--accent); background: var(--surface-2); }
+.theme-toggle:active { transform: translateY(1px); }
+.theme-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.theme-toggle svg { width: 18px; height: 18px; display: block; }
+/* Show the sun in light, the moon in dark — follows the explicit theme AND, when
+ * no explicit theme is set, the OS preference. */
+.theme-toggle .icon-moon { display: none; }
+:root[data-theme="dark"] .theme-toggle .icon-sun { display: none; }
+:root[data-theme="dark"] .theme-toggle .icon-moon { display: block; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) .theme-toggle .icon-sun { display: none; }
+  :root:not([data-theme]) .theme-toggle .icon-moon { display: block; }
 }
 
 /* ------------------------------------------------------------------ reset-ish */

@@ -7,6 +7,20 @@
   <meta name="description" content="Turn-by-turn board games, right in your timeline. Pick a game, make your opening move, and challenge anyone on X, Mastodon, or Bluesky — no API, no accounts. The thread is the game." />
   <meta name="color-scheme" content="light dark" />
 
+  <!-- Apply the saved theme BEFORE first paint (no flash of the wrong theme).
+       No stored pref -> follow the OS via prefers-color-scheme; "light"/"dark"
+       -> explicit override (see the toggle button + handler below). -->
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem("gage-theme");
+        if (t === "light" || t === "dark") {
+          document.documentElement.setAttribute("data-theme", t);
+        }
+      } catch (e) {}
+    })();
+  </script>
+
   <!-- Open Graph / Twitter card. Self-contained: no external image referenced
        (keeps the site free of network calls); platforms fall back to text. -->
   <meta property="og:title" content="Gage — board games in your timeline" />
@@ -39,6 +53,17 @@
         <span class="word">Gage</span>
       </a>
       <nav class="nav-right" aria-label="Primary">
+        <button type="button" class="theme-toggle" id="theme-toggle"
+                aria-label="Toggle light or dark theme" title="Toggle theme">
+          <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="4.2" />
+            <path d="M12 2.5v2.6M12 18.9v2.6M4.4 4.4l1.9 1.9M17.7 17.7l1.9 1.9M2.5 12h2.6M18.9 12h2.6M4.4 19.6l1.9-1.9M17.7 6.3l1.9-1.9" />
+          </svg>
+          <svg class="icon-moon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M21 12.9A8.6 8.6 0 1 1 11.1 3a6.8 6.8 0 0 0 9.9 9.9z" />
+          </svg>
+        </button>
         <a class="nav-link" href="#how">How it works</a>
         <a class="btn btn-primary" href="https://github.com/c0ze/gage.coze.org"
            target="_blank" rel="noopener" id="get-it">Get the extension</a>
@@ -219,5 +244,24 @@
 
   <!-- Site controller. -->
   <script src="app.js"></script>
+
+  <!-- Theme toggle: flip light<->dark explicitly and persist. No stored pref =
+       follow the OS; the first click sets an explicit choice, which the boot
+       script in <head> re-applies before paint on the next load. -->
+  <script>
+    (function () {
+      var btn = document.getElementById("theme-toggle");
+      if (!btn) return;
+      btn.addEventListener("click", function () {
+        var root = document.documentElement;
+        var explicit = root.getAttribute("data-theme");
+        var osDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+        var effective = explicit || (osDark ? "dark" : "light");
+        var next = effective === "dark" ? "light" : "dark";
+        root.setAttribute("data-theme", next);
+        try { localStorage.setItem("gage-theme", next); } catch (e) {}
+      });
+    })();
+  </script>
 </body>
 </html>
