@@ -59,6 +59,34 @@ const FALLBACK_PNG_B64 =
 // Decode the fallback once at module load into an immutable byte buffer.
 const FALLBACK_PNG = base64ToBytes(FALLBACK_PNG_B64);
 
+// Map a seed's `game` id to a human display name for the card. The Worker has
+// no game logic — this is purely presentational. Unknown ids fall back to a
+// capitalized form of the id (or "Board" if the id is unusable), so a new game
+// still renders a sensible card without a Worker change.
+const GAME_NAMES = {
+  chess: "Chess",
+  checkers: "Checkers",
+  reversi: "Reversi",
+  gomoku: "Gomoku",
+};
+
+// gameDisplayName(id) -> a safe, human display name. Never throws; always a
+// non-empty string. Interpolated values are still HTML-escaped at render time.
+function gameDisplayName(id) {
+  if (typeof id !== "string" || id.length === 0) return "Board";
+  // Own-property lookup only: an id like "constructor"/"__proto__" must NOT
+  // resolve an inherited property (which would render built-in text).
+  const known = Object.prototype.hasOwnProperty.call(GAME_NAMES, id)
+    ? GAME_NAMES[id]
+    : null;
+  if (known) return known;
+  // Unknown id: capitalize the first character; the rest is left as-is (it's
+  // still escaped downstream). If the id is only whitespace, fall back to Board.
+  const trimmed = id.trim();
+  if (trimmed.length === 0) return "Board";
+  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+}
+
 // ---------------------------------------------------------------------------
 // Small helpers
 // ---------------------------------------------------------------------------
@@ -102,7 +130,7 @@ function b64urlDecodeToString(seed) {
 // logic here). Any failure — bad base64, bad JSON, missing meta — collapses to
 // a sane default so /g/<seed> can still render a card instead of 500ing.
 function decodeSeedMeta(seed) {
-  const fallback = { w: "", b: "", turn: "w", san: "", key: "" };
+  const fallback = { w: "", b: "", turn: "w", san: "", key: "", game: "chess" };
   try {
     const env = JSON.parse(b64urlDecodeToString(seed));
     const meta = env && env.meta ? env.meta : {};
@@ -113,6 +141,9 @@ function decodeSeedMeta(seed) {
       turn: meta.turn === "b" ? "b" : "w",
       san: typeof meta.san === "string" ? meta.san : "",
       key: typeof meta.key === "string" ? meta.key : "",
+      // Top-level envelope field (NOT under meta). Defaults to "chess" when
+      // absent or non-string so older seeds keep working.
+      game: typeof env.game === "string" && env.game ? env.game : "chess",
     };
   } catch (_e) {
     return fallback;
@@ -160,17 +191,22 @@ function handleCard(seed) {
 
   const sideToMove = meta.turn === "w" ? "White" : "Black";
 
+  // Human display name for the game (e.g. "Chess", "Checkers"). Defensive:
+  // gameDisplayName never throws and always returns a non-empty string.
+  const gameName = gameDisplayName(meta.game);
+
   // Card title/description (per contract). Built from raw meta; every value is
   // escaped at interpolation time below — never trust handles/SAN.
   const title =
-    "♟ Chess challenge" + (meta.w ? " — @" + meta.w + " vs @" + meta.b : "");
+    "♟ " + gameName + " challenge" +
+    (meta.w ? " — @" + meta.w + " vs @" + meta.b : "");
   const description =
     sideToMove +
     " to move" +
     (meta.san ? " · last: " + meta.san : "") +
     " — play on X with Gage";
 
-  // Body on-ramp line, e.g. "@alice challenged @bob to chess — it's w to move".
+  // Body on-ramp line, e.g. "@alice challenged @bob to Chess — it's w to move".
   const challenger = meta.w || "someone";
   const opponent = meta.b || "you";
   const onramp =
@@ -178,7 +214,9 @@ function handleCard(seed) {
     challenger +
     " challenged @" +
     opponent +
-    " to chess — it's " +
+    " to " +
+    gameName +
+    " — it's " +
     meta.turn +
     " to move";
 
@@ -225,10 +263,10 @@ function handleCard(seed) {
 </head>
 <body>
   <img class="board" src="/img/${esc(meta.key)}.png"
-       alt="Chess board — ${esc(sideToMove)} to move"
+       alt="${esc(gameName)} board — ${esc(sideToMove)} to move"
        width="480" height="480">
   <h1>${esc(onramp)}</h1>
-  <p>Gage lets you play chess turn-by-turn right inside X (Twitter) —
+  <p>Gage lets you play board games turn-by-turn right inside X (Twitter) —
      one move per reply, no Twitter API.</p>
   <a class="cta" href="${esc(SITE_URL)}">Install the Gage extension</a>
   <p class="muted">Learn more at

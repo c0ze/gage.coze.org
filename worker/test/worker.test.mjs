@@ -46,8 +46,9 @@ function makeBucket() {
 }
 
 // Build a valid base64url seed from a meta bag (mirrors src/seed.js encoding).
-function makeSeed(meta) {
-  const envelope = { v: 1, game: "chess", state: { game: "chess" }, meta };
+// `game` sets the top-level envelope game id (defaults to "chess").
+function makeSeed(meta, game = "chess") {
+  const envelope = { v: 1, game, state: { game }, meta };
   const jsonStr = JSON.stringify(envelope);
   // Node: utf-8 -> base64 -> url-safe, strip padding.
   return Buffer.from(jsonStr, "utf8")
@@ -92,6 +93,67 @@ test("/g/<seed> returns HTML with correct twitter:image + escaped title", async 
   assert.match(html, /@alice vs @bob/);
   // "Black to move" (turn=b) + last move
   assert.match(html, /Black to move · last: Nf3/);
+});
+
+test("/g/<seed> is game-aware: a checkers seed yields a Checkers card", async () => {
+  const env = { BUCKET: makeBucket() };
+  const seed = makeSeed(
+    { w: "alice", b: "bob", turn: "w", san: "", key: "checkers-start" },
+    "checkers",
+  );
+  const res = await handle(req("GET", "/g/" + seed), env);
+  assert.equal(res.status, 200);
+  const html = await res.text();
+  // Title reflects the game name, not a hardcoded "Chess".
+  assert.match(html, /Checkers challenge/);
+  assert.ok(!/Chess challenge/.test(html), "leaked hardcoded Chess title");
+  // On-ramp line uses the display name.
+  assert.match(html, /challenged @bob to Checkers/);
+  // Board alt text is game-aware.
+  assert.match(html, /Checkers board/);
+});
+
+test("/g/<seed> with an unknown game id capitalizes it (still renders)", async () => {
+  const env = { BUCKET: makeBucket() };
+  const seed = makeSeed(
+    { w: "alice", b: "bob", turn: "w", san: "", key: "xiangqi-start" },
+    "xiangqi",
+  );
+  const res = await handle(req("GET", "/g/" + seed), env);
+  assert.equal(res.status, 200);
+  const html = await res.text();
+  assert.match(html, /Xiangqi challenge/);
+});
+
+test("/g/<seed> with a prototype-key game id doesn't leak built-in text", async () => {
+  const env = { BUCKET: makeBucket() };
+  // "constructor" is an inherited property on a plain object — the display-name
+  // lookup must be own-property only, or it renders "function Object() {...}".
+  const seed = makeSeed(
+    { w: "alice", b: "bob", turn: "w", san: "", key: "k" },
+    "constructor",
+  );
+  const res = await handle(req("GET", "/g/" + seed), env);
+  assert.equal(res.status, 200);
+  const html = await res.text();
+  assert.ok(!/native code/.test(html), "leaked built-in function text");
+  // Falls through to the capitalize path.
+  assert.match(html, /Constructor challenge/);
+});
+
+test("/g/<seed> with no game field defaults to Chess (back-compat)", async () => {
+  const env = { BUCKET: makeBucket() };
+  // Hand-build an envelope WITHOUT a top-level game field.
+  const envelope = { v: 1, state: {}, meta: { w: "a", b: "b", turn: "w", san: "", key: "k" } };
+  const seed = Buffer.from(JSON.stringify(envelope), "utf8")
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+  const res = await handle(req("GET", "/g/" + seed), env);
+  assert.equal(res.status, 200);
+  const html = await res.text();
+  assert.match(html, /Chess challenge/);
 });
 
 test("/g/<seed> escapes attacker-controllable handles (no raw injection)", async () => {

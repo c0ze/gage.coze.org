@@ -228,7 +228,8 @@
     };
   }
 
-  Gage.threadTransport = {
+  Gage.transports = Gage.transports || {};
+  Gage.transports.x = {
     readThreadMoves,
     postReply,
     observe,

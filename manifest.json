@@ -5,7 +5,7 @@
   "description": "Turn-by-turn board games on X — no API. Chess first; dev build.",
   "content_scripts": [
     {
-      "matches": ["*://x.com/*", "*://twitter.com/*"],
+      "matches": ["*://x.com/*", "*://twitter.com/*", "*://mastodon.social/*", "*://bsky.app/*"],
       "js": [
         "src/vendor/chess.js",
         "src/fen.js",
@@ -19,7 +19,10 @@
         "src/share.js",
         "src/transport/protocol.js",
         "src/transport/reconstruct.js",
-        "src/transport/thread-dom.js",
+        "src/transport/x.js",
+        "src/transport/mastodon.js",
+        "src/transport/bluesky.js",
+        "src/transport/select.js",
         "src/transport/orchestration.js",
         "src/content.js"
       ],
