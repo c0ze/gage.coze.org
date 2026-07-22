@@ -24,6 +24,12 @@
   let panelActive = false; // currently on a #gage game thread?
   let uiCollapsed = false; // minimized to header only
   let uiDismissed = false; // closed by the user (panel hidden, launcher shown)
+  // Signature of the last-rendered decision. refresh() re-renders ONLY when this
+  // changes, so a spurious observer fire — Mastodon mutates its DOM constantly, and
+  // opening the reply composer mutates it too — can't rebuild the board and clobber
+  // an in-progress two-click selection or a just-made local move the thread hasn't
+  // caught up to yet. Reset on navigation.
+  let lastRenderSig = null;
 
   // ---- small DOM helpers ------------------------------------------------
   function el(id) {
@@ -199,7 +205,7 @@
           .then(function () { return Gage.threadTransport.postReply(text); })
           .catch(function (e) {
             setStatus("couldn't open the reply — " + (e && e.message ? e.message : e) + " · restoring");
-            refresh();
+            refresh(true); // force a re-render to restore the board (the sig is unchanged)
           });
       });
       mount.appendChild(passBtn);
@@ -254,7 +260,7 @@
           .then(function () { return Gage.threadTransport.postReply(text); })
           .catch(function (e) {
             setStatus("couldn't open the reply — " + (e && e.message ? e.message : e) + " · restoring");
-            refresh(); // restore the authoritative board + re-enable so the player can retry
+            refresh(true); // force-restore the authoritative board + re-enable (sig unchanged)
           });
       });
     } else {
@@ -279,7 +285,24 @@
   // a #gage game thread it renders + observes and shows the panel (respecting
   // minimize/close); off a game thread it stops observing and HIDES the panel —
   // there is no always-on practice board.
-  function refresh() {
+  // A compact signature of everything a rendered frame depends on. Two consecutive
+  // decisions that share a signature mean the thread hasn't advanced — there is
+  // nothing new to draw, and re-rendering would only destroy the live board (and any
+  // in-progress selection / un-posted local move).
+  function decisionSig(d) {
+    // Include the reconstructed position (state) so an EDITED/replaced move with the
+    // same count still registers as a change; the rest captures the panel's frame.
+    return [d.gameId, d.moveCount, d.state ? JSON.stringify(d.state) : "",
+      d.interactive, d.over, d.error ? "e" : "-", d.turn, d.white, d.black,
+      d.myColor, d.status].join("|");
+  }
+
+  // force=true always (re)renders — used by the settle loop (initial mount + nav,
+  // which must re-establish the board + re-attach the observer to the CURRENT
+  // container) and by postReply failure-recovery (restore). force=false is the
+  // OBSERVER's path: (re)render only when the reconstructed game changed, so a
+  // spurious observer fire can't clobber an in-progress selection / un-posted move.
+  function refresh(force) {
     const ctx = readContext();
     const decision =
       Gage.orchestration && Gage.orchestration.decide
@@ -287,10 +310,21 @@
         : { isGame: false };
     if (decision.isGame && Gage.games[decision.gameId]) {
       panelActive = true;
-      setupGame(decision); // render + observe (into the panel, even while hidden)
+      // Re-render ONLY when the reconstructed game changed (or the board isn't
+      // mounted yet). This turns a spurious observer fire into a no-op instead of a
+      // board-wiping rebuild — the key to two-click games (checkers) and un-posted
+      // local moves surviving on mutation-heavy platforms like Mastodon. A genuine
+      // new reply changes moveCount/turn/status, so real updates still re-render.
+      const sig = decisionSig(decision);
+      const mount = el("gage-mount");
+      if (force || sig !== lastRenderSig || !mount || !mount.firstChild) {
+        lastRenderSig = sig;
+        setupGame(decision); // render + (re)observe (into the panel, even while hidden)
+      }
       applyUiState();
     } else {
       panelActive = false;
+      lastRenderSig = null;
       teardownObserver();
       applyUiState(); // hide the panel + launcher
     }
@@ -327,10 +361,10 @@
       if (settleTimer) clearInterval(settleTimer);
       let n = 0;
       const maxTicks = canEarlyStop ? 20 : 6; // ~8s cap vs ~2.4s ride-through
-      refresh();
+      refresh(true); // settle always (re)renders: establishes the board and re-attaches
       settleTimer = setInterval(function () {
         if (canEarlyStop && panelActive) { clearInterval(settleTimer); settleTimer = null; return; }
-        refresh();
+        refresh(true); // the observer to the CURRENT container as the thread hydrates/swaps
         if (++n >= maxTicks) { clearInterval(settleTimer); settleTimer = null; }
       }, 400);
     }
@@ -345,6 +379,7 @@
         // New thread: a fresh #gage game pops up (reset minimize/close).
         uiDismissed = false;
         uiCollapsed = false;
+        lastRenderSig = null; // new thread: force a fresh render
         settle(false); // ride through X's URL-before-DOM swap; no stale early-stop
       }
     }, 500);
