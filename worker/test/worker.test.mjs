@@ -6,6 +6,8 @@
 //   - /g/<seed> returns HTML with the right twitter:image URL + escaped title
 //   - a malformed seed still returns a 200 card
 //   - PUT /img/<key> stores, then a 2nd PUT skips (first-write-wins)
+//   - PUT guards: 411 no content-length, 413 too big (declared or actual),
+//     415 bytes that aren't a real PNG (see ../src/png.js + worker/png.test.mjs)
 //   - GET /img/<key> returns the stored bytes
 //   - an invalid key => 400
 //   - OPTIONS returns CORS headers
@@ -60,6 +62,32 @@ function makeSeed(meta, game = "chess") {
 
 const req = (method, path, opts = {}) =>
   new Request("https://gage.coze.org" + path, { method, ...opts });
+
+// A structurally valid minimal PNG head (signature + IHDR for size x size) so
+// PUT bodies pass the Worker's real-bytes validation (../src/png.js).
+function validPngBytes(size = 316) {
+  const u32be = (n) => [(n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff];
+  return new Uint8Array([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, // signature
+    ...u32be(13), 0x49, 0x48, 0x44, 0x52, // IHDR chunk length + type
+    ...u32be(size), ...u32be(size), // width, height
+    8, 6, 0, 0, 0, // bit depth, color type, compression, filter, interlace
+    0, 0, 0, 0, // CRC (unchecked by the validator)
+  ]);
+}
+
+// PUT helper. Node's Request does NOT auto-add content-length for byte bodies
+// (undici computes it at send time), so PUT tests set it explicitly — matching
+// what fetch sends on the wire for the extension's canvas.toBlob uploads.
+const putPng = (key, bytes, headers = {}) =>
+  req("PUT", "/img/" + key + ".png", {
+    headers: {
+      "content-type": "image/png",
+      "content-length": String(bytes.byteLength),
+      ...headers,
+    },
+    body: bytes,
+  });
 
 // ---------------------------------------------------------------------------
 
@@ -188,28 +216,16 @@ test("malformed seed still returns a 200 card (safe default)", async () => {
 test("PUT /img/<key> stores, then a second PUT skips (first-write-wins)", async () => {
   const env = { BUCKET: makeBucket() };
   const key = "position-abc";
-  const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 4]); // PNG-ish bytes
+  const bytes = validPngBytes(316);
 
-  const res1 = await handle(
-    req("PUT", "/img/" + key + ".png", {
-      headers: { "content-type": "image/png" },
-      body: bytes,
-    }),
-    env,
-  );
+  const res1 = await handle(putPng(key, bytes), env);
   assert.equal(res1.status, 201);
   assert.deepEqual(await res1.json(), { uploaded: true });
   assert.equal(res1.headers.get("access-control-allow-origin"), "*");
 
-  // Second PUT with DIFFERENT bytes must be skipped, not overwrite.
-  const other = new Uint8Array([9, 9, 9, 9]);
-  const res2 = await handle(
-    req("PUT", "/img/" + key + ".png", {
-      headers: { "content-type": "image/png" },
-      body: other,
-    }),
-    env,
-  );
+  // Second PUT with DIFFERENT (also valid) bytes must be skipped, not overwrite.
+  const other = validPngBytes(64);
+  const res2 = await handle(putPng(key, other), env);
   assert.equal(res2.status, 200);
   assert.deepEqual(await res2.json(), { skipped: true });
 
@@ -269,17 +285,50 @@ test("PUT with wrong content-type => 400", async () => {
   assert.equal(res.status, 400);
 });
 
-test("PUT with oversized body => 400", async () => {
+test("PUT with oversized body => 413 via the content-length pre-check", async () => {
   const env = { BUCKET: makeBucket() };
   const big = new Uint8Array(262144); // == MAX (rejected: must be < MAX)
+  const res = await handle(putPng("bigkey", big), env);
+  assert.equal(res.status, 413);
+  assert.equal(env.BUCKET._store.size, 0, "nothing stored");
+});
+
+test("PUT with a lying (small) content-length still 413s on actual size", async () => {
+  const env = { BUCKET: makeBucket() };
+  // Declared 100 bytes, actual body == MAX: the post-read check must catch it.
+  const big = new Uint8Array(262144);
+  const res = await handle(putPng("liar", big, { "content-length": "100" }), env);
+  assert.equal(res.status, 413);
+  assert.equal(env.BUCKET._store.size, 0, "nothing stored");
+});
+
+test("PUT without a content-length header => 411", async () => {
+  const env = { BUCKET: makeBucket() };
   const res = await handle(
-    req("PUT", "/img/bigkey.png", {
+    req("PUT", "/img/nolength.png", {
       headers: { "content-type": "image/png" },
-      body: big,
+      body: validPngBytes(),
     }),
     env,
   );
-  assert.equal(res.status, 400);
+  assert.equal(res.status, 411);
+  assert.equal(res.headers.get("access-control-allow-origin"), "*");
+});
+
+test("PUT with non-PNG bytes (claimed image/png) => 415, nothing stored", async () => {
+  const env = { BUCKET: makeBucket() };
+  // Claimed PNG but the bytes are not: must be rejected BEFORE reaching R2,
+  // since first-write-wins + immutable caching would pin the poison forever.
+  const junk = new Uint8Array(64).fill(0x41); // "AAAA..."
+  const res = await handle(putPng("poison", junk), env);
+  assert.equal(res.status, 415);
+  assert.equal(env.BUCKET._store.size, 0, "poison bytes must not be stored");
+
+  // Valid signature but absurd dimensions is rejected too.
+  const huge = validPngBytes(4096); // > 2048 px
+  const res2 = await handle(putPng("huge", huge), env);
+  assert.equal(res2.status, 415);
+  assert.equal(env.BUCKET._store.size, 0, "oversized-dimension png rejected");
 });
 
 test("OPTIONS preflight returns CORS headers", async () => {
