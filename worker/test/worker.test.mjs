@@ -63,17 +63,12 @@ function makeSeed(meta, game = "chess") {
 const req = (method, path, opts = {}) =>
   new Request("https://gage.coze.org" + path, { method, ...opts });
 
-// A structurally valid minimal PNG head (signature + IHDR for size x size) so
-// PUT bodies pass the Worker's real-bytes validation (../src/png.js).
+// A REAL structurally complete PNG (correct CRCs, zlib IDAT, terminal IEND)
+// so PUT bodies pass the Worker's full-bytes validation (../src/png.js) — the
+// validator no longer accepts header-only stubs.
+import { buildPng } from "../png-fixture.mjs";
 function validPngBytes(size = 316) {
-  const u32be = (n) => [(n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff];
-  return new Uint8Array([
-    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, // signature
-    ...u32be(13), 0x49, 0x48, 0x44, 0x52, // IHDR chunk length + type
-    ...u32be(size), ...u32be(size), // width, height
-    8, 6, 0, 0, 0, // bit depth, color type, compression, filter, interlace
-    0, 0, 0, 0, // CRC (unchecked by the validator)
-  ]);
+  return buildPng({ width: size, height: size });
 }
 
 // PUT helper. Node's Request does NOT auto-add content-length for byte bodies

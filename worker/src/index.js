@@ -560,6 +560,18 @@ async function handle(request, env) {
     }
     const key = rest.slice(0, -".png".length);
 
+    // Empty key: a malformed seed collapses to meta.key "" and its card HTML
+    // then points at /img/.png — the documented behavior is the PLACEHOLDER
+    // (see handleCard), not a broken image. Serve it for GET (HEAD: 404, same
+    // as any missing image) instead of falling through to the 400 below.
+    if (key === "" && request.method === "GET") return placeholderResponse();
+    if (key === "" && request.method === "HEAD") {
+      return new Response(null, {
+        status: 404,
+        headers: { "access-control-allow-origin": "*" },
+      });
+    }
+
     // Validate the key charset BEFORE touching R2 — rejects path traversal,
     // oversized keys, and anything outside the safe set.
     if (!KEY_RE.test(key)) {

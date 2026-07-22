@@ -1,173 +1,151 @@
 // Node test for the Worker's PNG upload validator (worker/src/png.js).
-// Run: node worker/png.test.mjs        (or: node png.test.mjs from worker/)
+// Run: node worker/png.test.mjs
 //
-// Plain node — no framework. Same assert + "ok - ..." console pattern as the
-// src/**/*.test.js suites. The module under test is pure (bytes in, verdict
-// out), so tests just hand-construct byte buffers:
-//   - a valid minimal PNG (signature + a correct IHDR for 316x316) -> accepted
-//     with the right parsed width/height
-//   - wrong magic, truncated buffers, a bad IHDR length, a non-IHDR first
-//     chunk, and out-of-range dimensions (0 / >2048 / <8) -> all rejected
-//   - bounds are inclusive: 8x8 and 2048x2048 are accepted
-
+// The validator is a STRUCTURAL gate against poisoning the first-write-wins,
+// immutable-cached /img store: signature + complete IHDR (fields + CRC) + a
+// full chunk-framing walk requiring >=1 IDAT and a terminal zero-length IEND.
+// These tests build REAL PNGs (png-fixture.mjs: zlib IDAT, computed CRCs) and
+// then break them one property at a time — the old validator accepted a
+// 24-byte header stub, which is now the FIRST thing asserted rejected.
 import assert from "node:assert";
 import { validatePng } from "./src/png.js";
+import { buildPng } from "./png-fixture.mjs";
 
-// ---------------------------------------------------------------------------
-// Byte-buffer builders
-// ---------------------------------------------------------------------------
-
-const SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
-
-function u32be(n) {
-  return [(n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff];
+let passed = 0;
+function ok(name) {
+  passed++;
+  console.log("ok - " + name);
 }
 
-// Build the head of a PNG: signature + IHDR chunk (length, type, 13 data
-// bytes, 4 CRC filler bytes — the validator doesn't check CRCs). Options let
-// individual tests corrupt one field at a time.
-function pngHead({
-  width = 316,
-  height = 316,
-  ihdrLength = 13,
-  type = "IHDR",
-  signature = SIGNATURE,
-} = {}) {
-  const typeBytes = [...type].map((c) => c.charCodeAt(0));
-  return new Uint8Array([
-    ...signature,
-    ...u32be(ihdrLength),
-    ...typeBytes,
-    ...u32be(width),
-    ...u32be(height),
-    8, // bit depth
-    6, // color type (RGBA)
-    0, // compression
-    0, // filter
-    0, // interlace
-    0, 0, 0, 0, // CRC (unchecked)
-  ]);
-}
-
-// ---------------------------------------------------------------------------
-// 1. Valid minimal PNG accepted, with correct parsed dimensions
-// ---------------------------------------------------------------------------
+// ---- 1. a real PNG is accepted, with parsed dimensions ---------------------
 {
-  const res = validatePng(pngHead({ width: 316, height: 316 }));
-  assert.strictEqual(res.ok, true, "valid 316x316 head must be accepted");
+  const res = validatePng(buildPng({ width: 316, height: 316 }));
+  assert.strictEqual(res.ok, true, "real 316x316 PNG must be accepted: " + res.reason);
   assert.strictEqual(res.width, 316);
   assert.strictEqual(res.height, 316);
-  assert.strictEqual(res.reason, "");
-  console.log("ok - valid minimal PNG (316x316) accepted with parsed dimensions");
+  ok("real 316x316 PNG accepted with parsed dimensions");
 }
 
-// A REAL complete PNG for good measure: the Worker's own 2x2 fallback tile is
-// a genuine PNG but its dimensions are below the 8px floor -> rejected. This
-// pins that the floor applies to real files, not just synthetic heads.
+// ---- 2. header-only stubs are REJECTED (the old validator's gap) -----------
 {
-  const fallbackB64 =
-    "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR42mMomxYGRAwQCgAnRgWJ/PFUxAAAAABJRU5ErkJggg==";
-  const bytes = new Uint8Array(Buffer.from(fallbackB64, "base64"));
-  const res = validatePng(bytes);
-  assert.strictEqual(res.ok, false, "2x2 real PNG is below the 8px floor");
-  assert.strictEqual(res.reason, "dimensions out of range");
-  console.log("ok - real 2x2 PNG parses but is rejected by the dimension floor");
+  const full = buildPng({ width: 316, height: 316 });
+  // 24 bytes = signature + IHDR length/type/width/height only.
+  assert.strictEqual(validatePng(full.slice(0, 24)).ok, false, "24-byte stub");
+  // 33 bytes = through the IHDR CRC, but no chunks after — still not a PNG.
+  const head = validatePng(full.slice(0, 33));
+  assert.strictEqual(head.ok, false, "33-byte IHDR-only stub");
+  assert.strictEqual(head.reason, "truncated chunk");
+  ok("header-only stubs rejected (24B and 33B)");
 }
 
-// ---------------------------------------------------------------------------
-// 2. Wrong magic rejected
-// ---------------------------------------------------------------------------
+// ---- 3. wrong magic rejected ------------------------------------------------
 {
-  const badSig = [...SIGNATURE];
-  badSig[0] = 0x88; // flip the first byte
-  const res = validatePng(pngHead({ signature: badSig }));
-  assert.strictEqual(res.ok, false);
-  assert.strictEqual(res.reason, "bad png signature");
-
-  // JPEG magic dressed up to the same length must also fail.
-  const jpeg = pngHead();
-  jpeg.set([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46], 0);
-  const res2 = validatePng(jpeg);
-  assert.strictEqual(res2.ok, false);
-  assert.strictEqual(res2.reason, "bad png signature");
-  console.log("ok - wrong magic rejected (flipped byte + JPEG magic)");
+  const bytes = buildPng({});
+  bytes[0] = 0xff;
+  assert.strictEqual(validatePng(bytes).reason, "bad png signature");
+  const jpeg = new Uint8Array(64).fill(0x11);
+  jpeg.set([0xff, 0xd8, 0xff, 0xe0]);
+  assert.strictEqual(validatePng(jpeg).reason, "bad png signature");
+  ok("wrong magic (tampered + JPEG) rejected");
 }
 
-// ---------------------------------------------------------------------------
-// 3. Truncated buffers rejected (never throws)
-// ---------------------------------------------------------------------------
+// ---- 4. truncation anywhere rejected ----------------------------------------
 {
-  const full = pngHead();
-  for (const len of [0, 1, 7, 8, 12, 16, 23]) {
-    const res = validatePng(full.slice(0, len));
-    assert.strictEqual(res.ok, false, `truncated at ${len} must be rejected`);
-    assert.strictEqual(res.reason, "too short");
+  const full = buildPng({ width: 8, height: 8 });
+  for (const len of [0, 7, 8, 20, 32, full.length - 5, full.length - 1]) {
+    assert.strictEqual(validatePng(full.slice(0, len)).ok, false, "len " + len);
   }
-  // 24 bytes is exactly enough to read through height -> accepted.
-  assert.strictEqual(validatePng(full.slice(0, 24)).ok, true);
-  console.log("ok - truncated buffers rejected at every short length");
+  ok("truncated buffers rejected at every boundary probed");
 }
 
-// ---------------------------------------------------------------------------
-// 4. IHDR chunk-header corruption rejected
-// ---------------------------------------------------------------------------
+// ---- 5. IHDR corruption rejected ---------------------------------------------
 {
-  const res = validatePng(pngHead({ ihdrLength: 12 }));
-  assert.strictEqual(res.ok, false);
-  assert.strictEqual(res.reason, "bad IHDR length");
-
-  const res2 = validatePng(pngHead({ ihdrLength: 14 }));
-  assert.strictEqual(res2.ok, false);
-  assert.strictEqual(res2.reason, "bad IHDR length");
-
-  const res3 = validatePng(pngHead({ type: "IDAT" }));
-  assert.strictEqual(res3.ok, false);
-  assert.strictEqual(res3.reason, "first chunk is not IHDR");
-  console.log("ok - IHDR length != 13 and non-IHDR first chunk rejected");
+  // bad declared IHDR length
+  const a = buildPng({});
+  a[11] = 12; // length 13 -> 12
+  assert.strictEqual(validatePng(a).reason, "bad IHDR length");
+  // first chunk not IHDR
+  const b = buildPng({});
+  b[12] = 0x58; // 'I' -> 'X'
+  assert.strictEqual(validatePng(b).reason, "first chunk is not IHDR");
+  // CRC broken by flipping a data byte WITHOUT recomputing the CRC
+  const c = buildPng({});
+  c[24] = 16; // bit depth 8 -> 16 (still legal for colour type 6) — CRC now stale
+  assert.strictEqual(validatePng(c).reason, "bad IHDR crc");
+  ok("IHDR corruption (length, type, stale CRC) rejected");
 }
 
-// ---------------------------------------------------------------------------
-// 5. Dimension bounds: 0 and >2048 rejected; 8..2048 inclusive accepted
-// ---------------------------------------------------------------------------
+// ---- 6. dimension bounds ------------------------------------------------------
 {
-  for (const [w, h] of [
-    [0, 316],
-    [316, 0],
-    [0, 0],
-    [2049, 316],
-    [316, 2049],
-    [7, 316], // below the 8px floor
-    [316, 7],
-    [0xffffffff, 316], // top bit set — must not go negative via 32-bit math
-  ]) {
-    const res = validatePng(pngHead({ width: w, height: h }));
-    assert.strictEqual(res.ok, false, `${w}x${h} must be rejected`);
-    assert.strictEqual(res.reason, "dimensions out of range");
-  }
-
-  for (const [w, h] of [
-    [8, 8],
-    [2048, 2048],
-    [8, 2048],
-    [316, 316],
-  ]) {
-    const res = validatePng(pngHead({ width: w, height: h }));
-    assert.strictEqual(res.ok, true, `${w}x${h} must be accepted`);
-    assert.strictEqual(res.width, w);
-    assert.strictEqual(res.height, h);
-  }
-  console.log("ok - dimension bounds enforced (0 / 7 / 2049 / 2^32-1 out, 8..2048 in)");
+  assert.strictEqual(validatePng(buildPng({ width: 7, height: 316 })).reason, "dimensions out of range");
+  assert.strictEqual(validatePng(buildPng({ width: 316, height: 2049 })).reason, "dimensions out of range");
+  assert.strictEqual(validatePng(buildPng({ width: 8, height: 8 })).ok, true, "8x8 boundary accepted");
+  assert.strictEqual(validatePng(buildPng({ width: 2048, height: 8 })).ok, true, "2048 boundary accepted");
+  ok("dimension bounds enforced (7 / 2049 rejected; 8 / 2048 accepted)");
 }
 
-// ---------------------------------------------------------------------------
-// 6. Non-buffer inputs rejected, never thrown
-// ---------------------------------------------------------------------------
+// ---- 7. illegal IHDR field rejected even with a CORRECT CRC --------------------
+{
+  const bytes = buildPng({});
+  bytes[28] = 2; // interlace 0 -> 2 (illegal)
+  // Recompute the IHDR CRC over [12..28] so the CRC check passes and the
+  // FIELD check is what rejects.
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let x = n;
+    for (let k = 0; k < 8; k++) x = x & 1 ? 0xedb88320 ^ (x >>> 1) : x >>> 1;
+    table[n] = x >>> 0;
+  }
+  let crc = 0xffffffff;
+  for (let i = 12; i < 29; i++) crc = table[(crc ^ bytes[i]) & 0xff] ^ (crc >>> 8);
+  crc = (crc ^ 0xffffffff) >>> 0;
+  bytes[29] = (crc >>> 24) & 0xff;
+  bytes[30] = (crc >>> 16) & 0xff;
+  bytes[31] = (crc >>> 8) & 0xff;
+  bytes[32] = crc & 0xff;
+  assert.strictEqual(validatePng(bytes).reason, "bad interlace method");
+  ok("illegal IHDR field (interlace 2) rejected past a correct CRC");
+}
+
+// ---- 8. chunk-framing: no IDAT / data after IEND -------------------------------
+{
+  const full = buildPng({ width: 8, height: 8 });
+  const iend = full.slice(full.length - 12); // IEND is always the last 12 bytes
+  const noIdat = new Uint8Array([...full.slice(0, 33), ...iend]);
+  assert.strictEqual(validatePng(noIdat).reason, "no IDAT data");
+  const trailing = new Uint8Array([...full, 0x00]);
+  assert.strictEqual(validatePng(trailing).reason, "data after IEND");
+  ok("chunk framing enforced (no IDAT; trailing bytes after IEND)");
+}
+
+// ---- 9. non-buffer inputs rejected without throwing -----------------------------
 {
   for (const bad of [null, undefined, "png", 42, {}, [], new ArrayBuffer(64)]) {
     const res = validatePng(bad);
-    assert.strictEqual(res.ok, false, "non-Uint8Array input must be rejected");
+    assert.strictEqual(res.ok, false);
   }
-  console.log("ok - non-Uint8Array inputs rejected without throwing");
+  ok("non-Uint8Array inputs rejected without throwing");
 }
 
-console.log("\nAll png.js validator tests passed.");
+// ---- 10. zero-length IDAT rejected (57-byte stub can't poison a key) -----------
+{
+  const full = buildPng({ width: 8, height: 8 });
+  const iend = full.slice(full.length - 12);
+  // signature+IHDR (33) + an EMPTY IDAT chunk (len 0, type, CRC of "IDAT") + IEND
+  const t = [0x49, 0x44, 0x41, 0x54];
+  let table = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let x = n;
+    for (let k = 0; k < 8; k++) x = x & 1 ? 0xedb88320 ^ (x >>> 1) : x >>> 1;
+    table[n] = x >>> 0;
+  }
+  let crc = 0xffffffff;
+  for (const b of t) crc = table[(crc ^ b) & 0xff] ^ (crc >>> 8);
+  crc = (crc ^ 0xffffffff) >>> 0;
+  const emptyIdat = [0, 0, 0, 0, ...t, (crc >>> 24) & 0xff, (crc >>> 16) & 0xff, (crc >>> 8) & 0xff, crc & 0xff];
+  const stub = new Uint8Array([...full.slice(0, 33), ...emptyIdat, ...iend]);
+  assert.strictEqual(validatePng(stub).reason, "no IDAT data");
+  ok("zero-length IDAT stub rejected (cumulative IDAT payload must be positive)");
+}
+
+console.log("\nAll png.js validator tests passed (" + passed + " checks).");

@@ -211,13 +211,19 @@
     return el ? el.innerText : "";
   }
 
-  // postElements() -> [{ node, anchor, text }] in thread order (root first). Like
-  // readThreadMoves(), but also returns each post's element (node) and its body
-  // element (anchor) so the board injector can drop a rendered position under the
-  // move. anchor may be null (image-only post) -> the injector appends to node.
+  // postElements() -> [{ node, anchor, text, author }] in thread order (root
+  // first). Like readThreadPosts(), but also returns each post's element (node)
+  // and its body element (anchor) so the board injector can drop a rendered
+  // position under the move — and gate by the SAME authorship rules the panel
+  // uses. anchor may be null (image-only post) -> the injector appends to node.
   function postElements() {
     return Array.from(document.querySelectorAll(SEL.item)).map(function (item) {
-      return { node: item, anchor: postBodyEl(item), text: postTextOf(item) };
+      return {
+        node: item,
+        anchor: postBodyEl(item),
+        text: postTextOf(item),
+        author: authorOf(item),
+      };
     });
   }
 

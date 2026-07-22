@@ -413,7 +413,15 @@
   // should re-read via readThreadMoves() as the source of truth rather than trust
   // a single emit (robust to Mastodon's node recycling on scroll).
   function observe(onNewMove) {
-    const root = container();
+    // OBSERVE the STABLE ancestor, not container(): container() scopes to the
+    // .column holding .detailed-status, but that resolution can CHANGE after
+    // subscribe (the focal post hydrates late -> columns-area first, column
+    // later). Watching the old node would miss every mutation in the new one —
+    // and the old node stays connected, so the heartbeat can't catch it either.
+    // Mutations on the wider ancestor are a superset (coalesced, cheap); each
+    // scan() still reads through postNodes(), which re-derives the CURRENT
+    // scoped container, so what we EMIT stays column-scoped.
+    const root = document.querySelector(SEL.container) || document.body;
     const PRE = Symbol("gagePre"); // unique per observe() call — no cross-observer collision
     const known = new Set();
     for (const a of postNodes()) {

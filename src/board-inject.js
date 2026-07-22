@@ -5,9 +5,10 @@
 // text, deduped by the position key so re-renders don't pile up and a recycled
 // node gets its board back. Best-effort: never throws into the page.
 //
-// Scope: Bluesky only. On X/Mastodon the reply already shows the native card, and
-// the ROOT challenge post has a card on every platform (created via the compose
-// intent), so we skip the first move too.
+// Scope: Bluesky only — on X/Mastodon every post already unfurls the native
+// card. The ROOT gets a board too: bsky challenges are linkless (the raw /g/
+// URL counted toward the 300-grapheme limit), so the injected board is the
+// opening position's only visual there.
 (function () {
   const Gage = (window.Gage = window.Gage || {});
 
@@ -59,18 +60,37 @@
       const posts = tt.postElements();
       if (!posts || !posts.length) return;
       const claimed = new Set(); // boards we placed/kept this pass
+      // Gate moves by AUTHORSHIP through the same collectMovePosts the panel's
+      // decide() uses — an outsider's legal-looking "[e5] #gage" reply must not
+      // render a divergent inline board (it isn't part of the game). Falls back
+      // to the ungated walk only if orchestration isn't loaded (manifest order
+      // makes that impossible in practice, but boards are decoration — degrade,
+      // don't die).
+      const orch = Gage.orchestration;
+      let accepted; // [{ index, moveText }] into `posts`
+      if (orch && orch.collectMovePosts && tt.getRootAuthorHandle) {
+        const white = tt.getRootAuthorHandle();
+        const black = orch.firstRivalMention
+          ? orch.firstRivalMention(posts[0].text, white)
+          : null;
+        accepted = orch.collectMovePosts(posts, Gage.protocol, white, black).moves;
+      } else {
+        accepted = [];
+        for (let i = 0; i < posts.length; i++) {
+          const parsed = Gage.protocol.parseMove(posts[i].text);
+          if (parsed) accepted.push({ index: i, moveText: parsed.moveText });
+        }
+      }
       let state = game.initialState();
-      let moveNo = 0;
-      for (const post of posts) {
-        const parsed = Gage.protocol.parseMove(post.text);
-        if (!parsed) continue; // chatter / non-move post — no board
-        const next = game.applyMoveText(state, parsed.moveText);
+      for (const mv of accepted) {
+        const next = game.applyMoveText(state, mv.moveText);
         if (!next) break; // desync — stop (position past here is unknown)
         state = next;
-        moveNo++;
-        if (moveNo === 1) continue; // the root challenge already has the native card
+        // The ROOT gets a board too: bsky challenges are now LINKLESS (the raw
+        // /g/ URL blew the 300-grapheme limit), so there's no native card on
+        // the root — the injected board is the opening position's only visual.
         try {
-          const img = injectBoardInto(game, state, post);
+          const img = injectBoardInto(game, state, posts[mv.index]);
           if (img) claimed.add(img);
         } catch (e) { /* skip just this board */ }
       }

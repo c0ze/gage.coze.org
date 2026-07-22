@@ -219,6 +219,14 @@
       opponentHandle: rivalRaw(), // normalizeHandle adds "@" if missing
       isChallenge: true,
     });
+    // BLUESKY: no share link. bsky counts the RAW URL toward its 300-grapheme
+    // limit (X/Mastodon count links as ~23), and the seed URL alone runs ~250+
+    // chars — a challenge with it exceeds 300 and is unpublishable from move
+    // one. bsky never unfurls the link into a card anyway, and the extension's
+    // board-inject renders positions inline there; the "[move] #gage #<game>"
+    // grammar is the entire protocol payload, so it's all we send. (This
+    // mirrors the extension's own bsky move replies — see content.js.)
+    if (platform === "bluesky") return challenge;
     var seed = Gage.buildShareSeed(game, openingState, {
       w: "",             // challenger handle unknown on the site
       b: rivalRaw(),     // the rival we're challenging

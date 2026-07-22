@@ -502,4 +502,34 @@ const reply = (san) => protocol.formatMove({ moveText: san, isChallenge: false }
   ok("lastAcceptedMoveIndex: outsider posts can't become the reply target");
 })();
 
+// ---- 11. white cannot be stolen through an unreadable root author ----------
+(function whiteStealGuard() {
+  // Root author read fails (author:null) and the challenge names a BARE white
+  // (rootAuthor "alice"). A federated lookalike "alice@evil.example" would
+  // handleMatch the bare form — but white may only BRIDGE at the ROOT post, so
+  // the lookalike's later white-slot move must be rejected (exact-only there).
+  const root = protocol.formatMove({ gameId: "chess", moveText: "e4", opponentHandle: "bob", isChallenge: true });
+  const d = orchestration.decide(
+    [
+      { text: root, author: null },                       // root: author unreadable
+      { text: reply("e5"), author: "bob" },               // black, fine
+      { text: reply("Nf3"), author: "alice@evil.example" } // lookalike claiming WHITE
+    ],
+    { me: "bob", rootAuthor: "alice" }
+  );
+  assert.strictEqual(d.moveCount, 2, "the lookalike's white move is skipped");
+  assert.strictEqual(d.turn, "w", "still genuinely White to move");
+  // The REAL white posting the same move (exact form) is accepted.
+  const d2 = orchestration.decide(
+    [
+      { text: root, author: null },
+      { text: reply("e5"), author: "bob" },
+      { text: reply("Nf3"), author: "alice" }
+    ],
+    { me: "bob", rootAuthor: "alice" }
+  );
+  assert.strictEqual(d2.moveCount, 3, "the exact-form white move is accepted");
+  ok("white-steal guard: late white slots require the exact mentioned handle");
+})();
+
 console.log("\nAll orchestration tests passed (" + passed + " checks).");

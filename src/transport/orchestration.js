@@ -142,17 +142,17 @@
   // even (white == rootAuthor posts the root move), black when odd.
   //
   // Each side has an identity LOCK — the exact author string the side is pinned
-  // to. WHITE locks to the root author from the start: rootAuthor and every
-  // per-post author come from the SAME adapter helper, so the rightful white
-  // player always reads as the identical string, and a federated lookalike
-  // ("alice@evil.example" impersonating local "alice") fails the exact test —
-  // handleMatch's bare-vs-qualified bridge is deliberately NOT honored on a
-  // locked side. BLACK starts unlocked with only the root MENTION to go by
-  // (possibly a short form like "@gand-tr" for "gand-tr.bsky.social"): the
-  // first READABLE author that handleMatches the mention claims the side and
-  // locks it, so from then on lookalikes are rejected exactly too. When a side
-  // has no mention at all (no rival resolved), the first readable poster of
-  // that side's slot claims it.
+  // to. BOTH sides start unlocked. WHITE may bridge (handleMatch's short-vs-full
+  // rule) ONLY at the ROOT post: rootAuthor and the root's per-post author are
+  // read off the SAME first post, so a form gap can only exist there — a LATER
+  // white slot with the side still unlocked requires the exact mentioned string,
+  // or a federated lookalike ("alice@evil.example" impersonating a bare "alice")
+  // could steal White while the root's author is unreadable. BLACK starts
+  // unlocked with only the root MENTION to go by (possibly a short form like
+  // "@gand-tr" for "gand-tr.bsky.social"): the first READABLE author that
+  // handleMatches the mention claims the side and locks it, so from then on
+  // lookalikes are rejected exactly too. When a side has no mention at all (no
+  // rival resolved), the first readable poster of that side's slot claims it.
   //
   // A post that parses as a move is accepted only if:
   //   (a) its author is null — the DOM couldn't read it (legacy string[] input,
@@ -178,7 +178,15 @@
   // mention at all claimed by its first poster).
   function collectMovePosts(posts, protocol, white, black) {
     const out = [];
-    const lock = { w: white != null ? String(white) : null, b: null };
+    // BOTH sides start unlocked and bridge through handleMatch on first claim.
+    // White previously pre-locked to the exact rootAuthor string, but the root
+    // author read (getRootAuthorHandle) and the per-post author read
+    // (readThreadPosts) can disagree in FORM — short vs full handle across a
+    // hydration race — and an exact pre-lock would then reject WHITE'S OWN
+    // moves (resetting the game to move one). handleMatch keeps the same
+    // instance-collision guard (two qualified handles must be equal) and the
+    // side still pins to the claimant's exact string afterward.
+    const lock = { w: null, b: null };
     const mention = { w: white, b: black };
     for (let i = 0; i < posts.length; i++) {
       const parsed = protocol.parseMove(posts[i].text);
@@ -189,7 +197,16 @@
         if (lock[side] != null) {
           if (author !== lock[side]) continue; // locked side: exact author only
         } else if (mention[side] != null) {
-          if (!handleMatch(author, mention[side])) continue; // wrong player
+          // WHITE may bridge (short vs full form) ONLY at the root post: the
+          // rootAuthor and the root post's author are read off the SAME first
+          // post, so a form gap can only exist there. On a LATER white slot
+          // (root author unreadable) a bridged claim would let a federated
+          // lookalike of a bare rootAuthor steal White — require exact.
+          if (side === "w" && i > 0) {
+            if (author !== mention.w) continue; // wrong player (no late bridging)
+          } else if (!handleMatch(author, mention[side])) {
+            continue; // wrong player
+          }
           lock[side] = author; // first readable rightful owner pins the side
         } else {
           lock[side] = author; // no mention to check — first readable poster claims it
