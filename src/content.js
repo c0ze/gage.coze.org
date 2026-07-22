@@ -63,6 +63,7 @@
       '<div class="gage-head">' +
         '<span class="gage-title">' + GAGE_MARK + 'Gage</span>' +
         '<span class="gage-ctrls">' +
+          '<button id="gage-refresh" class="gage-btn" type="button" title="Refresh from the thread" aria-label="Refresh">↻</button>' +
           '<button id="gage-min" class="gage-btn" type="button" title="Minimize" aria-label="Minimize">–</button>' +
           '<button id="gage-close" class="gage-btn" type="button" title="Close" aria-label="Close">×</button>' +
         '</span>' +
@@ -79,6 +80,11 @@
     el("gage-close").addEventListener("click", function () {
       uiDismissed = true;
       applyUiState();
+    });
+    el("gage-refresh").addEventListener("click", function () {
+      // Force a fresh read of the thread + re-render — e.g. after the opponent
+      // replies and the observer hasn't caught it, or to reset an in-progress move.
+      refresh(true);
     });
 
     // Small floating pill to re-open a closed panel (shown only while a game
