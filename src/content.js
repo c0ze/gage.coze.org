@@ -210,8 +210,10 @@
         Promise.resolve()
           .then(function () { return Gage.threadTransport.postReply(text); })
           .catch(function (e) {
-            setStatus("couldn't open the reply — " + (e && e.message ? e.message : e) + " · restoring");
             refresh(true); // force a re-render to restore the board (the sig is unchanged)
+            // AFTER refresh — setupGame sets the normal status, which would bury the
+            // error; overriding here keeps the failure visible until the next change.
+            setStatus("couldn't open the reply — " + (e && e.message ? e.message : e));
           });
       });
       mount.appendChild(passBtn);
@@ -265,8 +267,10 @@
         Promise.resolve()
           .then(function () { return Gage.threadTransport.postReply(text); })
           .catch(function (e) {
-            setStatus("couldn't open the reply — " + (e && e.message ? e.message : e) + " · restoring");
             refresh(true); // force-restore the authoritative board + re-enable (sig unchanged)
+            // AFTER refresh — setupGame sets the normal status, which would bury the
+            // error; overriding here keeps the failure visible until the next change.
+            setStatus("couldn't open the reply — " + (e && e.message ? e.message : e));
           });
       });
     } else {

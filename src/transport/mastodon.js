@@ -184,21 +184,49 @@
     });
   }
 
-  // Within a post, find the reply <button> by title/aria-label matching /repl/i.
-  // Mastodon localizes labels but keeps "Reply"/"repl*" in the accessible name;
-  // matching the action bar's buttons is stable across the focal/non-focal
-  // layouts (.detailed-status__action-bar vs .status__action-bar).
+  // Within a post, find the reply <button>.
+  //
+  // FINDING THE BAR (verified live on mastodon.social, 2026-07-22): a regular
+  // .status row CONTAINS its .status__action-bar, but the FOCAL post's bar is
+  // NOT inside .detailed-status — it's a sibling under the shared
+  // .detailed-status__wrapper (the .detailed-status node has ZERO buttons). The
+  // original in-node-only lookup therefore failed exactly when the reply target
+  // was the focal post — arda opening the rival's reply from a notification
+  // makes that reply focal, so postReply threw and the move visually reverted.
+  // So: in-node bar first (status rows), then climb to the wrapper (focal), then
+  // the page-level bar (unique — one focal post per thread page) as a last hop.
+  //
+  // PICKING THE BUTTON (locale-proof), in preference order:
+  // (1) the reply ICON — <i class="icon icon-reply"> ("icon-reply-all" on the
+  //     focal bar); icon classes don't localize, while a label regex silently
+  //     broke non-English UIs ("Yanıtla", "返信" never match /repl/i).
+  // (2) title/aria-label matching /repl/i — fallback if the icon markup drifts.
+  // (3) the FIRST button of a real action bar — Mastodon's order is fixed
+  //     (reply, boost, favourite, bookmark, more). Only when the bar itself was
+  //     found; guessing across the whole post would be worse than failing loudly.
   function replyButtonOf(node) {
-    const bar =
+    let bar =
       node.querySelector(SEL.detailedActionBar) ||
       node.querySelector(SEL.actionBar);
+    if (!bar) {
+      const wrapper = node.closest(".detailed-status__wrapper");
+      bar = wrapper ? wrapper.querySelector(SEL.detailedActionBar) : null;
+      // Last hop: the page's one focal action bar — but ONLY for the focal post
+      // itself, never as a stand-in for some other row's missing bar.
+      if (!bar && (node.matches(SEL.detailed) || node.querySelector(SEL.detailed))) {
+        bar = document.querySelector(SEL.detailedActionBar);
+      }
+    }
     const scope = bar || node;
-    return (
-      Array.from(scope.querySelectorAll("button")).find((b) => {
-        const label = (b.getAttribute("title") || b.getAttribute("aria-label") || "");
-        return /repl/i.test(label);
-      }) || null
-    );
+    const buttons = Array.from(scope.querySelectorAll("button"));
+    const byIcon = buttons.find((b) => b.querySelector('[class*="icon-reply"]'));
+    if (byIcon) return byIcon;
+    const byLabel = buttons.find((b) => {
+      const label = (b.getAttribute("title") || b.getAttribute("aria-label") || "");
+      return /repl/i.test(label);
+    });
+    if (byLabel) return byLabel;
+    return bar && buttons.length ? buttons[0] : null;
   }
 
   // Fill a React-controlled <textarea> so React's onChange actually fires. React
@@ -234,13 +262,45 @@
     if (!replyBtn) throw new Error("[gage] postReply: no reply control on target post");
     replyBtn.click();
 
+    // The compose textarea exists PERMANENTLY in Mastodon's left column, so the
+    // editor alone can't tell reply mode from a plain toot: if the click no-ops,
+    // filling would produce a NON-THREADED toot that silently forks the game. The
+    // .reply-indicator block renders only while the composer is in reply mode —
+    // AND it must reference OUR target post: a pre-existing indicator (the user
+    // was mid-reply to something else) or a wrong-bar click would otherwise pass
+    // the gate and fill the wrong thread. The indicator quotes the target's body
+    // through the same content renderer readThreadMoves uses, so a short prefix
+    // of postTextOf(target) appears verbatim in indicator.innerText (verified
+    // live 2026-07-22; short because the indicator truncates long posts). An
+    // empty target text (image-only post) can't be matched — accept any
+    // indicator rather than making such replies impossible.
+    const wantPrefix = String(postTextOf(target) || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 16);
+    try {
+      await waitFor(() => {
+        const el = document.querySelector(".reply-indicator");
+        if (!el) return null;
+        if (!wantPrefix) return el;
+        const got = (el.innerText || "").replace(/\s+/g, " ");
+        return got.indexOf(wantPrefix) !== -1 ? el : null;
+      });
+    } catch (e) {
+      throw new Error("[gage] postReply: reply mode didn't engage on the target post");
+    }
     const editor = await waitFor(() => document.querySelector(SEL.editor));
     editor.focus();
     // React owns this textarea; the native-setter + input-event dance below is
-    // what makes React commit our text (see setControlledTextarea). This REPLACES
-    // the textarea's contents wholesale, so any leftover draft from a prior open
-    // is overwritten rather than appended to.
-    setControlledTextarea(editor, String(text));
+    // what makes React commit our text (see setControlledTextarea). Mastodon
+    // prefills the composer with "@opponent " — the opponent's reply NOTIFICATION
+    // rides on that mention, so when the current contents are purely a mention
+    // block we KEEP it and append our move text. Anything else (a stale human
+    // draft) is replaced wholesale, as before.
+    const prefill = /^(@\S+\s*)+$/.test(editor.value)
+      ? editor.value.replace(/\s*$/, " ")
+      : "";
+    setControlledTextarea(editor, prefill + String(text));
 
     // Only when AUTO_SEND is on do we need the Post button: wait for it to exist
     // AND be enabled (Mastodon disables it until the composer has content; our
