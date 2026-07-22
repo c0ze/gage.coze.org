@@ -17,11 +17,15 @@ LIB_DIR="$SITE_DIR/lib"
 # The core modules the site loads (in dependency order), plus the shared
 # board/panel stylesheet. Each pair is "<src-path-relative-to-src> <dest-name>".
 # We flatten into lib/, but vendor/chess.js and games/chess.js share the basename
-# "chess.js", so the game module is renamed to chess-game.js to avoid a collision.
+# "chess.js", so the game modules are renamed to <game>-game.js to avoid a
+# collision (and for a consistent naming scheme across all four games).
 set -- \
   "vendor/chess.js"        "chess.js" \
   "fen.js"                 "fen.js" \
   "games/chess.js"         "chess-game.js" \
+  "games/checkers.js"      "checkers-game.js" \
+  "games/reversi.js"       "reversi-game.js" \
+  "games/gomoku.js"        "gomoku-game.js" \
   "seed.js"                "seed.js" \
   "board.js"               "board.js" \
   "board-image.js"         "board-image.js" \

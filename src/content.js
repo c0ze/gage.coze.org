@@ -45,9 +45,17 @@
     if (el("gage-panel")) return false;
     const panel = document.createElement("div");
     panel.id = "gage-panel";
+    // Brand mark: a minimal rounded square holding a knight glyph, in --accent.
+    // Kept clean and modern (not a crest); inline SVG so it's self-contained.
+    var GAGE_MARK =
+      '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
+        '<rect x="1.5" y="1.5" width="21" height="21" rx="6" fill="currentColor" opacity="0.14"/>' +
+        '<rect x="1.5" y="1.5" width="21" height="21" rx="6" stroke="currentColor" stroke-width="1.5"/>' +
+        '<path d="M9 17h7c0-3.2-.7-5.1-2.1-6.6.4-.5.6-1 .6-1.7 0-.5-.2-1-.5-1.4l-1 1-.7-.9c-1.9.2-3.4 1.3-4.2 3l1.7.7-1.9 1.6c.2 1.7 .6 3.1 1.2 4.3z" fill="currentColor"/>' +
+      '</svg>';
     panel.innerHTML =
       '<div class="gage-head">' +
-        '<span class="gage-title">♟ Gage <span class="gage-tag">dev</span></span>' +
+        '<span class="gage-title">' + GAGE_MARK + 'Gage</span>' +
         '<span class="gage-ctrls">' +
           '<button id="gage-min" class="gage-btn" type="button" title="Minimize" aria-label="Minimize">–</button>' +
           '<button id="gage-close" class="gage-btn" type="button" title="Close" aria-label="Close">×</button>' +
@@ -72,7 +80,7 @@
     const launcher = document.createElement("button");
     launcher.id = "gage-launcher";
     launcher.type = "button";
-    launcher.textContent = "♟";
+    launcher.innerHTML = GAGE_MARK;
     launcher.title = "Open Gage";
     launcher.addEventListener("click", function () {
       uiDismissed = false;

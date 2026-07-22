@@ -206,7 +206,7 @@ function handleCard(seed) {
     (meta.san ? " · last: " + meta.san : "") +
     " — play on X with Gage";
 
-  // Body on-ramp line, e.g. "@alice challenged @bob to Chess — it's w to move".
+  // Body on-ramp line, e.g. "@alice challenged @bob to Chess — it's White to move".
   const challenger = meta.w || "someone";
   const opponent = meta.b || "you";
   const onramp =
@@ -217,7 +217,7 @@ function handleCard(seed) {
     " to " +
     gameName +
     " — it's " +
-    meta.turn +
+    sideToMove +
     " to move";
 
   // Everything interpolated is escaped. Attributes are double-quoted so esc()'s
@@ -240,38 +240,137 @@ function handleCard(seed) {
 <meta property="og:description" content="${esc(description)}">
 
 <style>
-  :root { color-scheme: light dark; }
-  body {
-    margin: 0; padding: 2rem 1rem;
-    font: 16px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-    display: flex; flex-direction: column; align-items: center; gap: 1rem;
-    background: #f6f6f4; color: #1a1a1a;
+  :root {
+    color-scheme: light dark;
+    --bg:#f6f6f4; --surface:#ffffff; --surface-2:#faf9f7; --border:#e7e6e2;
+    --text:#16181c; --muted:#6c727d;
+    --accent:#4f9d5b; --accent-strong:#427f4b; --accent-tint:#eef5ef; --on-accent:#ffffff;
+    --board-light:#eeeed2; --board-dark:#769656; --last-move:rgba(79,157,91,.38);
+    --r-sm:8px; --r-md:12px; --r-lg:18px; --r-pill:999px;
+    --shadow-sm:0 1px 2px rgba(20,22,26,.06);
+    --shadow-md:0 6px 20px rgba(20,22,26,.08);
+    --shadow-lg:0 16px 48px rgba(20,22,26,.12);
+    --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   }
   @media (prefers-color-scheme: dark) {
-    body { background: #14140f; color: #e8e8e2; }
+    :root {
+      --bg:#0e1110; --surface:#161a18; --surface-2:#1b201d; --border:#272d29;
+      --text:#e9ece8; --muted:#98a29b;
+      --accent:#63b06b; --accent-strong:#7cc084; --accent-tint:#18241b; --on-accent:#0e1110;
+      --shadow-sm:0 1px 2px rgba(0,0,0,.3);
+      --shadow-md:0 6px 20px rgba(0,0,0,.35);
+      --shadow-lg:0 16px 48px rgba(0,0,0,.5);
+    }
   }
-  .board { width: min(90vw, 480px); height: auto; border-radius: 8px;
-           box-shadow: 0 2px 12px rgba(0,0,0,.25); }
-  h1 { font-size: 1.25rem; margin: .25rem 0 0; text-align: center; }
-  p  { margin: .25rem 0; text-align: center; max-width: 40rem; }
-  .cta { display: inline-block; margin-top: .5rem; padding: .6rem 1.1rem;
-         background: #769656; color: #fff; text-decoration: none;
-         border-radius: 6px; font-weight: 600; }
-  .muted { opacity: .7; font-size: .9rem; }
-  a { color: #4a7; }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: clamp(1.5rem, 5vw, 3rem) 1.25rem;
+    font-family: var(--font);
+    font-size: 16px; line-height: 1.6; font-weight: 400;
+    background: var(--bg); color: var(--text);
+    -webkit-font-smoothing: antialiased;
+    display: flex; flex-direction: column; align-items: center;
+  }
+  .wrap {
+    width: 100%; max-width: 34rem;
+    display: flex; flex-direction: column; align-items: center;
+    gap: 1.75rem;
+  }
+
+  /* Brand ------------------------------------------------------------- */
+  .brand {
+    display: inline-flex; align-items: center; gap: .55rem;
+    text-decoration: none; color: var(--text);
+  }
+  .brand svg { display: block; }
+  .brand .word {
+    font-size: 1.5rem; font-weight: 800; letter-spacing: -0.02em;
+    color: var(--text);
+  }
+
+  /* Board (hero) ------------------------------------------------------ */
+  .board-frame {
+    width: 100%;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    box-shadow: var(--shadow-md);
+    padding: clamp(.75rem, 3vw, 1.1rem);
+  }
+  .board {
+    display: block; width: 100%; height: auto;
+    aspect-ratio: 1 / 1;
+    border-radius: var(--r-md);
+    box-shadow: var(--shadow-sm);
+  }
+
+  /* Headline + copy --------------------------------------------------- */
+  .head { text-align: center; display: flex; flex-direction: column; gap: .5rem; }
+  .eyebrow {
+    font-size: 13px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .04em; color: var(--muted);
+  }
+  h1 {
+    margin: 0; font-weight: 800; letter-spacing: -0.02em; line-height: 1.15;
+    font-size: clamp(1.5rem, 4.5vw, 2rem);
+  }
+  .blurb { margin: 0; color: var(--muted); max-width: 30rem; }
+
+  /* CTA --------------------------------------------------------------- */
+  .cta {
+    display: inline-flex; align-items: center; gap: .5rem;
+    padding: .7rem 1.25rem;
+    background: var(--accent); color: var(--on-accent);
+    text-decoration: none; font-weight: 600;
+    border-radius: var(--r-md);
+    box-shadow: var(--shadow-sm);
+    transition: transform 150ms ease, box-shadow 150ms ease, background 150ms ease;
+  }
+  .cta:hover { transform: translateY(-1px); box-shadow: var(--shadow-md); background: var(--accent-strong); }
+  .cta:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* Footer ------------------------------------------------------------ */
+  .foot {
+    font-size: 13px; color: var(--muted); text-align: center;
+    padding-top: .25rem;
+  }
+  .foot a { color: var(--muted); text-decoration: none; border-bottom: 1px solid var(--border); }
+  .foot a:hover { color: var(--text); }
+  .dot { opacity: .5; margin: 0 .5rem; }
 </style>
 </head>
 <body>
-  <img class="board" src="/img/${esc(meta.key)}.png"
-       alt="${esc(gameName)} board — ${esc(sideToMove)} to move"
-       width="480" height="480">
-  <h1>${esc(onramp)}</h1>
-  <p>Gage lets you play board games turn-by-turn right inside X (Twitter) —
-     one move per reply, no Twitter API.</p>
-  <a class="cta" href="${esc(SITE_URL)}">Install the Gage extension</a>
-  <p class="muted">Learn more at
-     <a href="${esc(SITE_URL)}">gage.coze.org</a> ·
-     source on <a href="${esc(REPO_URL)}">GitHub</a>.</p>
+  <div class="wrap">
+    <a class="brand" href="${esc(SITE_URL)}" aria-label="Gage">
+      <svg width="30" height="30" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+        <rect x="1" y="1" width="30" height="30" rx="9" fill="var(--accent)"/>
+        <path d="M13.5 8.5c-2.2.6-3.8 2.5-3.8 4.9 0 .9.3 1.6.7 2.3l-1.6 1.5c-.5.5-.8 1.1-.8 1.8v2.2c0 .7.6 1.3 1.3 1.3h9.4c.7 0 1.3-.6 1.3-1.3V21c0-4.2-1.9-7.6-4.6-9.4.3-.4.5-.9.5-1.5 0-1.2-1-2.2-2.2-2.2-.4 0-.7.1-1 .2l1 1.6z" fill="var(--on-accent)"/>
+      </svg>
+      <span class="word">Gage</span>
+    </a>
+
+    <div class="board-frame">
+      <img class="board" src="/img/${esc(meta.key)}.png"
+           alt="${esc(gameName)} board — ${esc(sideToMove)} to move"
+           width="480" height="480">
+    </div>
+
+    <div class="head">
+      <div class="eyebrow">${esc(gameName)} challenge</div>
+      <h1>${esc(onramp)}</h1>
+      <p class="blurb">Gage turns any board game into a turn-by-turn match right in your timeline — one move per reply, no API keys, no app to open.</p>
+    </div>
+
+    <a class="cta" href="${esc(SITE_URL)}">Get the Gage extension</a>
+
+    <div class="foot">
+      <a href="${esc(SITE_URL)}">gage.coze.org</a>
+      <span class="dot">·</span>
+      <a href="${esc(REPO_URL)}">GitHub</a>
+    </div>
+  </div>
 </body>
 </html>`;
 

@@ -3,14 +3,14 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Gage — throw down the gauntlet</title>
-  <meta name="description" content="Challenge anyone to a game on X. Pick your rival, make your opening move, and cast the gauntlet. Turn-by-turn chess played in public replies — no API, no accounts." />
-  <meta name="color-scheme" content="dark" />
+  <title>Gage — board games in your timeline</title>
+  <meta name="description" content="Turn-by-turn board games, right in your timeline. Pick a game, make your opening move, and challenge anyone on X, Mastodon, or Bluesky — no API, no accounts. The thread is the game." />
+  <meta name="color-scheme" content="light dark" />
 
-  <!-- Open Graph / Twitter card. Self-contained: no external image is referenced
+  <!-- Open Graph / Twitter card. Self-contained: no external image referenced
        (keeps the site free of network calls); platforms fall back to text. -->
-  <meta property="og:title" content="Gage — throw down the gauntlet" />
-  <meta property="og:description" content="Challenge anyone to a game on X. Make your opening move, cast the gauntlet." />
+  <meta property="og:title" content="Gage — board games in your timeline" />
+  <meta property="og:description" content="Turn-by-turn board games, right in your timeline. Make your opening move and challenge anyone." />
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://gage.coze.org/" />
   <meta name="twitter:card" content="summary" />
@@ -20,81 +20,114 @@
   <link rel="stylesheet" href="lib/styles.css" />
   <link rel="stylesheet" href="styles.css" />
 
-  <!-- Inline SVG favicon (a gauntlet/glove mark). data: URI => no network. -->
-  <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0 0 32 32'%3E%3Crect%20width='32'%20height='32'%20rx='6'%20fill='%230d0b0c'/%3E%3Ctext%20x='16'%20y='23'%20font-size='20'%20text-anchor='middle'%3E%F0%9F%A5%8A%3C/text%3E%3C/svg%3E" />
+  <!-- Inline SVG favicon (the brand mark: a rounded square holding a knight in
+       --accent). data: URI => no network. -->
+  <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='8'%20fill='%234f9d5b'/%3E%3Ctext%20x='16'%20y='24'%20font-size='21'%20text-anchor='middle'%20fill='%23ffffff'%3E%E2%99%9E%3C/text%3E%3C/svg%3E" />
 </head>
 <body>
+
+  <!-- ============================= TOP BAR ============================= -->
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="/" aria-label="Gage — home">
+        <!-- Brand mark: rounded square holding a knight glyph, in --accent. -->
+        <svg class="mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+          <rect width="32" height="32" rx="8" fill="var(--accent)" />
+          <text x="16" y="24" font-size="21" text-anchor="middle" fill="var(--on-accent)"
+                font-family="ui-sans-serif, system-ui, sans-serif">&#9822;</text>
+        </svg>
+        <span class="word">Gage</span>
+      </a>
+      <nav class="nav-right" aria-label="Primary">
+        <a class="nav-link" href="#how">How it works</a>
+        <a class="btn btn-primary" href="https://github.com/c0ze/gage.coze.org"
+           target="_blank" rel="noopener" id="get-it">Get the extension</a>
+      </nav>
+    </div>
+  </header>
+
   <div class="wrap">
 
-    <header class="site-head">
-      <div class="brandline">Correspondence duels on X</div>
-    </header>
-
+    <!-- =============================== HERO =============================== -->
     <section class="hero">
-      <div class="crest" aria-hidden="true">🥊</div>
-      <h1 class="wordmark">Gage</h1>
-      <p class="tagline">Throw down the gauntlet.</p>
-      <p class="subtag">
-        Name your rival. Make your opening move. Cast the challenge to
-        <span class="accent">X</span> and play it out, one reply at a time.
-      </p>
-    </section>
+      <div class="hero-copy">
+        <p class="eyebrow">Chess · Checkers · Reversi · Gomoku</p>
+        <h1>Turn-by-turn board games, right in your timeline.</h1>
+        <p class="lead">
+          Pick a game, make your opening move, and challenge anyone — on X,
+          Mastodon, or Bluesky. No API, no accounts. The thread is the game.
+        </p>
+        <div class="hero-cta">
+          <a class="btn btn-primary btn-lg" href="#creator">Create a challenge</a>
+          <a class="btn btn-secondary btn-lg" href="#how">How it works</a>
+        </div>
+      </div>
 
-    <!-- ================= THE CHALLENGE CREATOR (flow A) ================= -->
-    <main class="duel" aria-labelledby="duel-title">
-      <div class="duel-inner">
-        <h2 id="duel-title" class="visually-hidden" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);">Create a challenge</h2>
+      <!-- The board is the hero visual. It doubles as the creator's opening-move
+           surface; the whole creator card lives here. -->
+      <main class="creator" id="creator" aria-labelledby="creator-title">
+        <div class="creator-head">
+          <h2 id="creator-title">Create a challenge</h2>
+          <p>Set the game, make your move, name your rival, and post it.</p>
+        </div>
 
-        <!-- Step 1 — GAME -->
-        <div class="step">
-          <div class="step-head">
-            <span class="step-no">I</span>
-            <h3 class="step-title">Choose your game</h3>
-          </div>
-          <div class="choices" role="group" aria-label="Game">
+        <!-- Step 1 — GAME picker -->
+        <div class="field">
+          <span class="label" id="game-label">Game</span>
+          <div class="chips" role="group" aria-labelledby="game-label" id="game-chips">
             <button type="button" class="chip is-active" data-game="chess" aria-pressed="true">
-              <span class="ico" aria-hidden="true">♟</span> Chess
+              <span class="ico" aria-hidden="true">&#9823;</span> Chess
             </button>
-            <button type="button" class="chip" disabled aria-disabled="true">
-              <span class="ico" aria-hidden="true">⛀</span> Checkers <span class="soon">soon</span>
+            <button type="button" class="chip" data-game="checkers" aria-pressed="false">
+              <span class="ico" aria-hidden="true">&#9899;</span> Checkers
             </button>
-            <button type="button" class="chip" disabled aria-disabled="true">
-              <span class="ico" aria-hidden="true">⚫</span> Reversi <span class="soon">soon</span>
+            <button type="button" class="chip" data-game="reversi" aria-pressed="false">
+              <span class="ico" aria-hidden="true">&#9679;</span> Reversi
+            </button>
+            <button type="button" class="chip" data-game="gomoku" aria-pressed="false">
+              <span class="ico" aria-hidden="true">&#9679;</span> Gomoku
             </button>
           </div>
         </div>
 
-        <!-- Step 2 — PLATFORM -->
-        <div class="step">
-          <div class="step-head">
-            <span class="step-no">II</span>
-            <h3 class="step-title">Choose your arena</h3>
-          </div>
-          <div class="choices" role="group" aria-label="Platform">
+        <!-- Step 2 — PLATFORM picker -->
+        <div class="field">
+          <span class="label" id="platform-label">Platform</span>
+          <div class="chips" role="group" aria-labelledby="platform-label" id="platform-chips">
             <button type="button" class="chip is-active" data-platform="x" aria-pressed="true">
-              <span class="ico" aria-hidden="true">𝕏</span> X
+              <span class="ico" aria-hidden="true">&#120143;</span> X
             </button>
-            <button type="button" class="chip" disabled aria-disabled="true">
-              <span class="ico" aria-hidden="true">🐘</span> Mastodon <span class="soon">soon</span>
+            <button type="button" class="chip" data-platform="mastodon" aria-pressed="false">
+              <span class="ico" aria-hidden="true">&#128024;</span> Mastodon
             </button>
-            <button type="button" class="chip" disabled aria-disabled="true">
-              <span class="ico" aria-hidden="true">🦋</span> Bluesky <span class="soon">soon</span>
+            <button type="button" class="chip" data-platform="bluesky" aria-pressed="false">
+              <span class="ico" aria-hidden="true">&#129415;</span> Bluesky
             </button>
           </div>
         </div>
 
-        <!-- Step 3 — RIVAL -->
-        <div class="step">
-          <div class="step-head">
-            <span class="step-no">III</span>
-            <h3 class="step-title">Name your rival</h3>
+        <!-- Step 3 — OPENING MOVE (the board) -->
+        <div class="field">
+          <span class="label" id="board-label">Your opening move</span>
+          <div class="board-stage" role="group" aria-labelledby="board-label">
+            <div class="board-frame" id="board-frame">
+              <!-- Gage.renderGame mounts the real board here. -->
+              <div id="board-mount"></div>
+            </div>
+            <p class="board-caption" id="board-caption" aria-live="polite">
+              You play first — make a move to set the opening.
+            </p>
           </div>
+        </div>
+
+        <!-- Step 4 — RIVAL -->
+        <div class="field">
+          <label class="label" for="rival">Rival handle</label>
           <div class="handle-field">
             <span class="handle-at" aria-hidden="true">@</span>
             <!-- Plain text, no autocomplete: X's user search needs the API we
                  avoid. (Bluesky exposes a public actor-typeahead endpoint —
-                 app.bsky.actor.searchActorsTypeahead — wire that when Bluesky
-                 ships.) -->
+                 app.bsky.actor.searchActorsTypeahead — wire that later.) -->
             <input
               id="rival"
               type="text"
@@ -104,92 +137,85 @@
               autocorrect="off"
               spellcheck="false"
               placeholder="rival_handle"
-              aria-label="Rival handle on X (with or without a leading @)" />
-          </div>
-          <p class="step-hint">Their X handle — with or without the “@”.</p>
-        </div>
-
-        <!-- Step 4 — OPENING MOVE -->
-        <div class="step">
-          <div class="step-head">
-            <span class="step-no">IV</span>
-            <h3 class="step-title">Make your opening move</h3>
-          </div>
-          <p class="step-hint" style="margin-bottom:12px;">You are White. Move a piece to set the gauntlet down.</p>
-          <div class="board-stage">
-            <div class="board-frame" id="board-frame">
-              <!-- Gage.renderGame mounts the real board here. -->
-              <div id="board-mount"></div>
-            </div>
-            <p class="board-caption" id="board-caption" aria-live="polite">Move a white piece to choose your opening.</p>
+              aria-label="Rival handle (with or without a leading @)" />
           </div>
         </div>
 
         <!-- CAST -->
         <div class="cast">
-          <button type="button" class="throw" id="throw-btn" disabled aria-describedby="cast-note">
-            <span class="glove" aria-hidden="true">🥊</span> Throw down the gauntlet
+          <button type="button" class="btn btn-primary btn-lg" id="throw-btn" disabled
+                  aria-describedby="cast-note">
+            Create challenge
           </button>
-          <p class="cast-note" id="cast-note">Name a rival and choose an opening to cast your challenge.</p>
+          <p class="cast-note" id="cast-note">Make a move and name a rival to create your challenge.</p>
+          <p class="platform-note" id="platform-note" hidden>Mastodon opens mastodon.social.</p>
 
           <div class="preview" id="preview" hidden>
-            <p class="preview-label">Your challenge post</p>
+            <p class="preview-label">Post preview</p>
             <p class="preview-text" id="preview-text"></p>
           </div>
         </div>
-
-      </div><!-- /duel-inner -->
-    </main>
-
-    <!-- ===================== INSTALL / BOTH PLAYERS ===================== -->
-    <section class="install" id="install">
-      <h2>Both players need the Gage extension</h2>
-      <p class="lede">
-        Gage plays inside the X page itself — it reads the thread, draws a live
-        board, and fills your reply. That means <strong>you and your rival both
-        need the extension installed</strong> to play a duel out. It isn’t on the
-        Chrome Web Store yet, so load it unpacked (desktop Chrome):
-      </p>
-      <ol class="steps-list">
-        <li>Download or clone the Gage repository to your machine.</li>
-        <li>Open <code>chrome://extensions</code> and switch on <strong>Developer mode</strong> (top-right).</li>
-        <li>Click <strong>Load unpacked</strong> and select the repository folder.</li>
-        <li>Open <code>x.com</code> — the Gage board panel appears bottom-right. You’re armed.</li>
-      </ol>
-
-      <p class="both-note">
-        The challenge you cast from this page is a normal X post: your rival sees
-        it even without the extension. But to <em>reply with moves and see the
-        board</em>, they’ll need Gage too — point them here.
-      </p>
-
-      <a class="ghlink" id="get-it" href="#" target="_blank" rel="noopener">
-        <span aria-hidden="true">⬇</span> Get the extension on GitHub
-      </a>
+      </main>
     </section>
 
-    <footer class="site-foot">
-      <span>Gage</span>
-      <span class="sep">·</span>
-      <span>a formal duel, one reply at a time</span>
-      <span class="sep">·</span>
-      <span>no API · no accounts · your move</span>
-    </footer>
+    <!-- ============================ HOW IT WORKS ============================ -->
+    <section class="section how" id="how">
+      <h2>How it works</h2>
+      <p class="sub">A challenge is just a public post. Every reply carries one move, and the thread itself becomes the board.</p>
+      <div class="steps">
+        <div class="step-card">
+          <span class="step-num">1</span>
+          <h3>Challenge</h3>
+          <p>Choose a game, make your opening move, and post it to your rival. It reads as a normal post — anyone can see it.</p>
+        </div>
+        <div class="step-card">
+          <span class="step-num">2</span>
+          <h3>They reply</h3>
+          <p>Your rival installs Gage, sees the live board in the thread, and replies with their move. Back and forth, one move per reply.</p>
+        </div>
+        <div class="step-card">
+          <span class="step-num">3</span>
+          <h3>The thread is the game</h3>
+          <p>No server keeps score. Gage reads the reply chain and rebuilds the position — the public thread <em>is</em> the record of play.</p>
+        </div>
+      </div>
+    </section>
 
   </div><!-- /wrap -->
 
+  <!-- =============================== FOOTER =============================== -->
+  <footer class="site-foot">
+    <div class="foot-inner">
+      <a class="brand" href="/" aria-label="Gage — home">
+        <svg class="mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+          <rect width="32" height="32" rx="8" fill="var(--accent)" />
+          <text x="16" y="24" font-size="21" text-anchor="middle" fill="var(--on-accent)"
+                font-family="ui-sans-serif, system-ui, sans-serif">&#9822;</text>
+        </svg>
+        <span class="word">Gage</span>
+      </a>
+      <span class="spacer"></span>
+      <a href="https://github.com/c0ze/gage.coze.org" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://blog.arda.tr/blog/2026-07-22-introducing-gage-chess-on-x-with-no-api" target="_blank" rel="noopener">Blog post</a>
+    </div>
+  </footer>
+
   <!-- ===== Shared core, copied into lib/ by build.sh, loaded in dependency
-       order (same order the extension's manifest uses). These attach to
+       order (the SAME order the extension's manifest uses). These attach to
        window.Gage; app.js consumes that namespace. Classic scripts, no modules,
-       no bundler, no CDN. ===== -->
-  <script src="lib/chess.js"></script>       <!-- vendored chess.js (window.Chess) -->
+       no bundler, no CDN. vendor/chess.js + fen.js are needed only by chess; the
+       other game modules are self-contained. ===== -->
+  <script src="lib/chess.js"></script>        <!-- vendored chess.js (window.Chess) -->
   <script src="lib/fen.js"></script>
-  <script src="lib/chess-game.js"></script>  <!-- games/chess.js -> Gage.games.chess -->
+  <script src="lib/chess-game.js"></script>   <!-- games/chess.js    -> Gage.games.chess -->
+  <script src="lib/checkers-game.js"></script><!-- games/checkers.js -> Gage.games.checkers -->
+  <script src="lib/reversi-game.js"></script> <!-- games/reversi.js  -> Gage.games.reversi -->
+  <script src="lib/gomoku-game.js"></script>  <!-- games/gomoku.js   -> Gage.games.gomoku -->
   <script src="lib/seed.js"></script>
   <script src="lib/board.js"></script>
-  <script src="lib/protocol.js"></script>    <!-- transport/protocol.js -> Gage.protocol -->
-  <script src="lib/board-image.js"></script> <!-- board-image.js -> Gage.boardImageBlob (before share.js) -->
-  <script src="lib/share.js"></script>       <!-- share.js -> Gage.buildShareSeed/gameUrl/uploadBoardImage -->
+  <script src="lib/protocol.js"></script>     <!-- transport/protocol.js -> Gage.protocol -->
+  <script src="lib/board-image.js"></script>  <!-- board-image.js -> Gage.boardImageBlob (before share.js) -->
+  <script src="lib/share.js"></script>        <!-- share.js -> Gage.buildShareSeed/gameUrl/uploadBoardImage -->
 
   <!-- Site controller. -->
   <script src="app.js"></script>

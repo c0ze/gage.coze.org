@@ -1,28 +1,29 @@
-// Gage landing site — the "challenge creator" (flow A).
+// Gage landing site — the "challenge creator".
 //
 // This file owns ONLY the site's UI orchestration. Everything load-bearing —
 // the real board, move legality, and the challenge text — comes from the shared
 // core (window.Gage), the SAME modules the extension uses, copied into lib/ by
-// build.sh. We do not reimplement any game logic here.
+// build.sh. We do NOT reimplement any game logic here.
 //
-// Flow: pick game (chess) -> arena (X) -> type rival handle -> make ONE opening
-// move on a real board -> "Throw down the gauntlet" opens X's web-intent
-// composer, prefilled with the challenge post built by Gage.protocol.formatMove.
+// Flow: pick a game (chess / checkers / reversi / gomoku) -> pick a platform
+// (X / Mastodon / Bluesky) -> make ONE opening move on a real board -> type the
+// rival handle -> "Create challenge" opens that platform's web-intent composer,
+// prefilled with the challenge post built by Gage.protocol.formatMove plus a
+// gage.coze.org/g/<seed> share link.
 (function () {
   "use strict";
 
   // --- guard: the core must have loaded (classic scripts, window.Gage) --------
   var Gage = window.Gage;
   if (
-    !Gage || !Gage.games || !Gage.games.chess || !Gage.renderGame || !Gage.protocol ||
-    !Gage.uploadBoardImage || !Gage.buildShareSeed || !Gage.gameUrl
+    !Gage || !Gage.games || !Gage.renderGame || !Gage.protocol ||
+    !Gage.uploadBoardImage || !Gage.buildShareSeed || !Gage.gameUrl ||
+    !Gage.games.chess || !Gage.games.checkers || !Gage.games.reversi || !Gage.games.gomoku
   ) {
-    // If lib/ wasn't built (e.g. previewing without `sh site/build.sh`), fail
-    // loudly in the board area rather than silently doing nothing.
     var mountFail = document.getElementById("board-mount");
     if (mountFail) {
       mountFail.innerHTML =
-        '<p style="color:#c8253b;font-size:0.9rem;padding:16px;text-align:center;">' +
+        '<p style="color:#b00020;font-size:0.9rem;padding:16px;text-align:center;">' +
         "Gage core failed to load. Run <code>sh site/build.sh</code> to populate " +
         "<code>site/lib/</code>, then reload.</p>";
     }
@@ -30,9 +31,15 @@
   }
 
   // --- constants --------------------------------------------------------------
-  var GAME_ID = "chess";
-  var GITHUB_URL = "https://github.com/c0ze/gage.coze.org"; // repo for "Get it"
-  var X_INTENT = "https://x.com/intent/tweet?text=";
+  var GITHUB_URL = "https://github.com/c0ze/gage.coze.org";
+
+  // Per-platform compose-intent URL prefixes. The challenge text is appended
+  // URL-encoded. (Mastodon has no universal intent, so we open mastodon.social.)
+  var PLATFORM_INTENT = {
+    x: "https://x.com/intent/tweet?text=",
+    mastodon: "https://mastodon.social/share?text=",
+    bluesky: "https://bsky.app/intent/compose?text=",
+  };
 
   // --- DOM refs ---------------------------------------------------------------
   var frameEl = document.getElementById("board-frame");
@@ -41,54 +48,59 @@
   var rivalEl = document.getElementById("rival");
   var throwBtn = document.getElementById("throw-btn");
   var castNote = document.getElementById("cast-note");
+  var platformNote = document.getElementById("platform-note");
   var previewBox = document.getElementById("preview");
   var previewText = document.getElementById("preview-text");
   var getItLink = document.getElementById("get-it");
+  var gameChipsEl = document.getElementById("game-chips");
+  var platformChipsEl = document.getElementById("platform-chips");
 
   if (getItLink) getItLink.href = GITHUB_URL;
 
   // --- state ------------------------------------------------------------------
-  // The chosen opening move in SAN (e.g. "e4"), or null until one is made.
-  var openingSan = null;
-  // The State immediately AFTER the chosen opening — the exact position we both
-  // upload an image for and encode into the share seed on Cast. null until a move
-  // is chosen (reset to null when the opening is changed).
+  var gameId = "chess";       // selected game id
+  var platform = "x";         // selected platform id
+  var game = Gage.games[gameId];
+
+  // The chosen opening move's text (chess SAN "e4", checkers "b6-a5", reversi/
+  // gomoku square token "d3"), or null until one is made.
+  var openingText = null;
+  // The State immediately AFTER the chosen opening — the exact position we encode
+  // into the share seed (and upload an image for) on Create. null until a move is
+  // chosen (reset to null when the game changes or the opening is changed).
   var openingState = null;
 
-  var chess = Gage.games[GAME_ID];
-
   // ---------------------------------------------------------------------------
-  // Board: render fresh, capture the FIRST move only, then lock.
+  // Board: render fresh for the current game, capture the FIRST move, then lock.
   // ---------------------------------------------------------------------------
 
-  // Mount an interactive board at the start position. The renderer appends a new
-  // grid each call, so we always clear the mount first to render "fresh".
+  // Mount an interactive board at the start position of the current game. The
+  // renderer appends a new grid each call, so we always clear the mount first.
   function mountInteractiveBoard() {
     mountEl.innerHTML = "";
     frameEl.classList.remove("is-locked");
-    // Gage.renderGame(game, state, mountEl, onMove)
-    Gage.renderGame(chess, chess.initialState(), mountEl, onFirstMove);
+    // Gage.renderGame(game, state, mountEl, onMove) — works for movement AND
+    // placement games (reversi/gomoku commit on a single click).
+    Gage.renderGame(game, game.initialState(), mountEl, onFirstMove);
   }
 
-  // onMove payload from the renderer: { from, to, text, seed, state }.
-  // text is the SAN of the move just played (challenger is White, so this is
-  // White's opening, e.g. "e4"). We take the FIRST move only.
+  // onMove payload from the renderer: { from, to, text, seed, state }. `text` is
+  // the move just played by the side to move (challenger is White / first, so
+  // this is the opening). We take the FIRST move only.
   function onFirstMove(mv) {
-    if (openingSan !== null) return; // already locked to an opening; ignore
-    openingSan = mv.text; // SAN, e.g. "e4"
+    if (openingText !== null) return; // already locked to an opening; ignore
+    openingText = mv.text;   // game's move text (SAN / notation / square token)
     openingState = mv.state; // the post-opening position
     lockBoardTo(mv.state);
     renderOpeningCaption();
     refreshCastState();
 
-    // Best-effort: start uploading the board image NOW, while the user types the
-    // rival handle. Doing it here (not on Cast) means the cache is likely warm by
-    // the time the tweet posts, and it keeps Cast inside the click gesture (no
-    // await before window.open). uploadBoardImage never throws — it resolves
-    // { error } — but we still guard with .catch so a rejection can't surface as
-    // an unhandled rejection or break this handler.
+    // Best-effort: warm the board-image cache now, while the user types the
+    // rival handle. uploadBoardImage never throws — it resolves { error } — but
+    // we still guard with .catch so a rejection can't surface as an unhandled
+    // rejection or break this handler.
     try {
-      Gage.uploadBoardImage(chess, mv.state)
+      Gage.uploadBoardImage(game, mv.state)
         .then(function (res) {
           if (res && res.error) {
             console.warn("[gage] board image upload failed (non-fatal):", res.error);
@@ -100,27 +112,25 @@
     }
   }
 
-  // Re-render the board read-only at the committed position: a fresh render onto
-  // the mount with a no-op onMove, plus .is-locked (CSS disables pointer events
-  // on the grid and stamps an "opening set" badge). We keep showing the position
-  // rather than a blank board so the challenger sees exactly what they cast.
+  // Re-render the board read-only at the committed position: a fresh render with
+  // a no-op onMove, plus .is-locked (CSS disables pointer events + stamps a
+  // badge). We keep showing the position so the challenger sees what they cast.
   function lockBoardTo(state) {
     mountEl.innerHTML = "";
-    Gage.renderGame(chess, state, mountEl, function () {});
+    Gage.renderGame(game, state, mountEl, function () {});
     frameEl.classList.add("is-locked");
   }
 
-  // Caption: "Your opening: e4 — [change]" once a move is chosen; change resets
-  // the board to the start position for a re-pick.
+  // Caption: "Your opening: <move> — [change]" once a move is chosen; change
+  // resets the board to the start position for a re-pick.
   function renderOpeningCaption() {
     captionEl.textContent = "Your opening: ";
     var strong = document.createElement("span");
     strong.className = "move";
-    strong.textContent = openingSan;
+    strong.textContent = openingText;
     captionEl.appendChild(strong);
 
-    var sep = document.createTextNode(" — ");
-    captionEl.appendChild(sep);
+    captionEl.appendChild(document.createTextNode(" — "));
 
     var change = document.createElement("button");
     change.type = "button";
@@ -130,28 +140,59 @@
     captionEl.appendChild(change);
   }
 
-  // Reset to the start position and let the player pick a different opening. The
-  // next chosen move re-triggers the image upload (see onFirstMove); no special
-  // handling needed here beyond clearing the captured opening + its state.
+  // Reset to the start position so the player can pick a different opening.
   function resetOpening() {
-    openingSan = null;
+    openingText = null;
     openingState = null;
-    captionEl.textContent = "Move a white piece to choose your opening.";
+    captionEl.textContent = defaultCaption();
     mountInteractiveBoard();
     refreshCastState();
+  }
+
+  function defaultCaption() {
+    return "You play first — make a move to set the opening.";
+  }
+
+  // ---------------------------------------------------------------------------
+  // Game / platform pickers
+  // ---------------------------------------------------------------------------
+  // Switching game clears the current opening and re-renders that game's board.
+  function selectGame(id) {
+    if (id === gameId || !Gage.games[id]) return;
+    gameId = id;
+    game = Gage.games[id];
+    openingText = null;
+    openingState = null;
+    setActiveChip(gameChipsEl, "game", id);
+    captionEl.textContent = defaultCaption();
+    mountInteractiveBoard();
+    refreshCastState();
+  }
+
+  function selectPlatform(id) {
+    if (!PLATFORM_INTENT[id]) return;
+    platform = id;
+    setActiveChip(platformChipsEl, "platform", id);
+    if (platformNote) platformNote.hidden = id !== "mastodon";
+    refreshCastState();
+  }
+
+  // Mark the chip whose data-<attr> === value active (aria-pressed + class),
+  // clearing the rest in the group.
+  function setActiveChip(groupEl, attr, value) {
+    var chips = groupEl.querySelectorAll(".chip");
+    for (var i = 0; i < chips.length; i++) {
+      var active = chips[i].getAttribute("data-" + attr) === value;
+      chips[i].classList.toggle("is-active", active);
+      chips[i].setAttribute("aria-pressed", active ? "true" : "false");
+    }
   }
 
   // ---------------------------------------------------------------------------
   // Rival handle
   // ---------------------------------------------------------------------------
-  // Accept the handle with or without a leading "@". We keep the raw text for the
-  // input and only normalize when building the post (protocol.normalizeHandle
-  // also tolerates a missing "@", so passing either form is safe).
-  //
-  // No autocomplete: X's user search requires the API we're deliberately not
-  // using. (Bluesky offers a PUBLIC typeahead — app.bsky.actor
-  // .searchActorsTypeahead — so a Bluesky arena could add suggestions later
-  // without any auth.)
+  // Accept the handle with or without a leading "@". normalizeHandle (in the
+  // protocol) tolerates a missing "@", so passing either form is safe.
   function rivalRaw() {
     return (rivalEl.value || "").trim();
   }
@@ -168,35 +209,33 @@
   // We then append a share link to the game page:
   //   "<challenge> https://gage.coze.org/g/<seed>"
   // The seed encodes the post-opening position + players so the Worker at that
-  // URL can serve a board-image card (on-ramp for non-installers). The link is
-  // ADDITIVE — it lives after the "[move] #gage" grammar, so parseMove still
-  // reads the move from the "[...]" slot unchanged. Challenger handle `w` is
-  // unknown here (the site never asks who's casting), so it's "".
+  // URL can serve a board-image card. The link is ADDITIVE — after the
+  // "[move] #gage" grammar — so parseMove still reads the move from the "[...]"
+  // slot unchanged. Challenger handle `w` is unknown here, so it's "".
   function buildChallengeText() {
     var challenge = Gage.protocol.formatMove({
-      gameId: GAME_ID,
-      moveText: openingSan,
+      gameId: gameId,
+      moveText: openingText,
       opponentHandle: rivalRaw(), // normalizeHandle adds "@" if missing
       isChallenge: true,
     });
-    var seed = Gage.buildShareSeed(chess, openingState, {
-      w: "", // challenger handle unknown on the site
-      b: rivalRaw(), // the rival we're challenging
-      san: openingSan, // the opening's SAN
+    var seed = Gage.buildShareSeed(game, openingState, {
+      w: "",             // challenger handle unknown on the site
+      b: rivalRaw(),     // the rival we're challenging
+      san: openingText,  // the opening's move text
     });
     return challenge + " " + Gage.gameUrl(seed);
   }
 
-  // X web intent, text-only. Per spec we deliberately do NOT pass a url param —
-  // the post is just the marker + move so the thread stays a clean move carrier.
+  // Compose-intent URL for the selected platform, text-only.
   function buildIntentUrl(text) {
-    return X_INTENT + encodeURIComponent(text);
+    return PLATFORM_INTENT[platform] + encodeURIComponent(text);
   }
 
   function castChallenge() {
     if (!canCast()) return;
     var text = buildChallengeText();
-    // Open X's composer in a new tab. noopener for safety.
+    // Open the platform's composer in a new tab. noopener for safety.
     window.open(buildIntentUrl(text), "_blank", "noopener");
   }
 
@@ -204,7 +243,11 @@
   // Cast button enable/disable + live preview
   // ---------------------------------------------------------------------------
   function canCast() {
-    return hasRival() && openingSan !== null;
+    return hasRival() && openingText !== null;
+  }
+
+  function platformLabel() {
+    return platform === "x" ? "X" : platform === "mastodon" ? "Mastodon" : "Bluesky";
   }
 
   function refreshCastState() {
@@ -212,30 +255,27 @@
     throwBtn.disabled = !ready;
 
     if (ready) {
-      castNote.classList.remove("warn");
-      castNote.textContent = "Opens X with your challenge ready to post.";
+      castNote.textContent = "Opens " + platformLabel() + " with your challenge ready to post.";
       showPreview(buildChallengeText());
     } else {
       hidePreview();
-      castNote.classList.remove("warn");
-      if (!hasRival() && openingSan === null) {
-        castNote.textContent = "Name a rival and choose an opening to cast your challenge.";
-      } else if (!hasRival()) {
-        castNote.textContent = "Name your rival to cast the challenge.";
+      if (!hasRival() && openingText === null) {
+        castNote.textContent = "Make a move and name a rival to create your challenge.";
+      } else if (openingText === null) {
+        castNote.textContent = "Make your opening move to create the challenge.";
       } else {
-        castNote.textContent = "Make your opening move to cast the challenge.";
+        castNote.textContent = "Name your rival to create the challenge.";
       }
     }
   }
 
   // Render the exact post text, lightly highlighting the #gage marker and the
-  // [move] slot so the challenger sees what will be posted.
+  // [move] slot. We build via DOM nodes (no innerHTML with user text) to stay
+  // XSS-safe on the handle.
   function showPreview(text) {
     previewBox.hidden = false;
-    previewText.textContent = ""; // clear
+    previewText.textContent = "";
 
-    // Tokenize into: marker (#gage), move slot ([...]), and plain runs. We build
-    // via DOM nodes (no innerHTML with user text) to stay XSS-safe on the handle.
     var re = /(#gage\b|\[[^\]]*\])/g;
     var last = 0;
     var m;
@@ -265,17 +305,17 @@
   rivalEl.addEventListener("input", refreshCastState);
   throwBtn.addEventListener("click", castChallenge);
 
-  // Game / platform chips are single-option today (chess, X). They're already
-  // marked active in the HTML; the disabled "coming soon" ones do nothing. We
-  // still guard clicks so a future enabled chip is trivial to wire.
-  document.querySelectorAll(".chip[data-game], .chip[data-platform]").forEach(function (chip) {
-    chip.addEventListener("click", function () {
-      if (chip.disabled) return;
-      // (Only one selectable option per group for now — nothing to toggle.)
-    });
+  gameChipsEl.addEventListener("click", function (e) {
+    var chip = e.target.closest(".chip[data-game]");
+    if (chip) selectGame(chip.getAttribute("data-game"));
+  });
+  platformChipsEl.addEventListener("click", function (e) {
+    var chip = e.target.closest(".chip[data-platform]");
+    if (chip) selectPlatform(chip.getAttribute("data-platform"));
   });
 
   // Initial paint.
+  captionEl.textContent = defaultCaption();
   mountInteractiveBoard();
   refreshCastState();
 })();

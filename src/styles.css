@@ -1,94 +1,211 @@
+/* Gage — in-page extension panel + shared board.
+   Design system: clean, modern, minimal; board-forward.
+   Self-contained: system font stack only, no external assets/fonts. */
+
+/* Tokens are scoped to Gage's own elements (not bare :root) so they can never
+   leak into or collide with the host page (X/Mastodon/Bluesky) styles. */
+#gage-panel,
+#gage-launcher {
+  --bg: #f6f6f4;
+  --surface: #ffffff;
+  --surface-2: #faf9f7;
+  --border: #e7e6e2;
+  --text: #16181c;
+  --muted: #6c727d;
+  --accent: #4f9d5b;
+  --accent-strong: #427f4b;
+  --accent-tint: #eef5ef;
+  --on-accent: #ffffff;
+  --board-light: #eeeed2;
+  --board-dark: #769656;
+  --last-move: rgba(79, 157, 91, 0.38);
+
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 18px;
+  --r-pill: 999px;
+
+  --shadow-sm: 0 1px 2px rgba(20, 22, 26, 0.06);
+  --shadow-md: 0 6px 20px rgba(20, 22, 26, 0.08);
+  --shadow-lg: 0 16px 48px rgba(20, 22, 26, 0.12);
+
+  --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  #gage-panel,
+  #gage-launcher {
+    --bg: #0e1110;
+    --surface: #161a18;
+    --surface-2: #1b201d;
+    --border: #272d29;
+    --text: #e9ece8;
+    --muted: #98a29b;
+    --accent: #63b06b;
+    --accent-strong: #7cc084;
+    --accent-tint: #18241b;
+    --on-accent: #0e1110;
+    /* board + last-move unchanged */
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.55);
+  }
+}
+
+/* ---- Floating panel ---------------------------------------------------- */
 #gage-panel {
   position: fixed;
   right: 16px;
   bottom: 16px;
   z-index: 99999;
+  box-sizing: border-box;
   width: 340px;
-  background: #15202b;
-  color: #e7e9ea;
-  border: 1px solid #38444d;
-  border-radius: 14px;
-  padding: 12px;
-  font-family: system-ui, -apple-system, sans-serif;
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+  max-width: calc(100vw - 32px);
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: 14px;
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.5;
+  box-shadow: var(--shadow-lg);
 }
+
 .gage-head {
-  font-weight: 700;
-  margin-bottom: 8px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 6px;
+  gap: 8px;
+  margin-bottom: 12px;
 }
+
 .gage-title {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+  font-weight: 800;
+  font-size: 16px;
+  letter-spacing: -0.02em;
+  color: var(--text);
 }
+
+.gage-title svg {
+  display: block;
+  width: 20px;
+  height: 20px;
+  color: var(--accent);
+}
+
 .gage-ctrls {
   display: flex;
-  gap: 2px;
+  gap: 4px;
 }
+
 .gage-btn {
-  width: 24px;
-  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
   padding: 0;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   background: transparent;
-  color: #8b98a5;
+  color: var(--muted);
   font: inherit;
-  font-size: 17px;
+  font-size: 18px;
   line-height: 1;
   cursor: pointer;
+  transition: background 150ms ease, color 150ms ease;
 }
+
 .gage-btn:hover {
-  background: #22303c;
-  color: #e7e9ea;
+  background: var(--surface-2);
+  color: var(--text);
 }
+
 /* Minimized: keep only the header row. */
+#gage-panel.gage-collapsed {
+  padding-bottom: 14px;
+}
+#gage-panel.gage-collapsed .gage-head {
+  margin-bottom: 0;
+}
 #gage-panel.gage-collapsed #gage-body {
   display: none;
 }
+
 /* Re-open pill for a closed panel. */
 #gage-launcher {
   position: fixed;
   right: 16px;
   bottom: 16px;
   z-index: 99999;
-  width: 46px;
-  height: 46px;
-  border-radius: 50%;
-  border: 1px solid #38444d;
-  background: #15202b;
-  color: #e7e9ea;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--accent);
   font-size: 22px;
   line-height: 1;
   cursor: pointer;
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-lg);
+  transition: transform 150ms ease, box-shadow 150ms ease;
 }
+
 #gage-launcher:hover {
-  background: #1d2733;
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-lg);
+  background: var(--surface-2);
 }
+
+#gage-launcher svg {
+  display: block;
+  width: 22px;
+  height: 22px;
+}
+
+/* Subtle status chip / tag. */
 .gage-tag {
-  font-size: 10px;
-  background: #1d9bf0;
-  color: #fff;
-  padding: 1px 6px;
-  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  background: var(--accent-tint);
+  color: var(--accent-strong);
+  border: 1px solid var(--accent);
+  padding: 1px 8px;
+  border-radius: var(--r-pill);
+  text-transform: lowercase;
 }
+
+/* ---- Board (the hero) -------------------------------------------------- */
 .gage-board {
   display: grid;
   grid-template-columns: repeat(8, 1fr);
   grid-template-rows: repeat(8, 1fr);
+  /* Fixed 316px box to match board.js's inline glyph size (computed from 316px),
+     so pieces never over/undershoot their cells. max-width keeps it from
+     overflowing a narrow phone panel (the panel caps at 100vw - 32px). */
   width: 316px;
   height: 316px;
-  border-radius: 8px;
+  max-width: 100%;
+  aspect-ratio: 1 / 1;
+  margin: 0 auto;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
   overflow: hidden;
+  box-shadow: var(--shadow-md);
   /* Fallback glyph size for an 8x8 board; board.js overrides this inline with a
      size scaled to the actual board dimensions (responsive). .gage-sq inherits. */
   font-size: 30px;
 }
+
 .gage-sq {
   display: flex;
   align-items: center;
@@ -101,9 +218,16 @@
   cursor: pointer;
   user-select: none;
 }
-.gage-light { background: #eeeed2; }
-.gage-dark { background: #769656; }
-.gage-sel { outline: 3px solid #f6f669; outline-offset: -3px; }
+
+.gage-light { background: var(--board-light); }
+.gage-dark { background: var(--board-dark); }
+
+/* Selection: soft accent ring inside the square. */
+.gage-sel {
+  outline: 3px solid var(--accent);
+  outline-offset: -3px;
+}
+
 /* Legal-move hints emitted by the generic renderer. */
 .gage-move { position: relative; }
 .gage-move::after {
@@ -112,37 +236,58 @@
   width: 30%;
   height: 30%;
   border-radius: 50%;
-  background: rgba(20, 20, 20, 0.35);
+  background: var(--last-move);
 }
-.gage-capture { box-shadow: inset 0 0 0 3px rgba(246, 246, 105, 0.9); }
-.gage-white { color: #fff; text-shadow: 0 0 2px #000, 0 0 1px #000; }
-.gage-black { color: #111; }
+
+/* Capture target: accent ring hugging the square. */
+.gage-capture {
+  box-shadow: inset 0 0 0 3px var(--accent);
+}
+
+/* Piece contrast: white = white fill + subtle dark outline; black = near-black. */
+.gage-white {
+  color: #ffffff;
+  text-shadow: 0 0 2px rgba(0, 0, 0, 0.55), 0 1px 1px rgba(0, 0, 0, 0.45);
+}
+.gage-black {
+  color: #16181c;
+  text-shadow: 0 1px 1px rgba(255, 255, 255, 0.18);
+}
+
+/* ---- Status + pass ----------------------------------------------------- */
 .gage-status {
-  margin-top: 8px;
+  margin-top: 12px;
   font-size: 12px;
-  color: #8b98a5;
-  word-break: break-all;
+  line-height: 1.5;
+  color: var(--muted);
+  word-break: break-word;
 }
+
 /* Pass control (reversi): shown only when the side to move has no legal
    placement and the game isn't over. Posts a "pass" move through the reply path. */
 .gage-pass {
   display: block;
   width: 100%;
-  margin-top: 8px;
-  padding: 8px 12px;
+  margin-top: 12px;
+  padding: 9px 12px;
   border: none;
-  border-radius: 8px;
-  background: #1d9bf0;
-  color: #fff;
+  border-radius: var(--r-md);
+  background: var(--accent);
+  color: var(--on-accent);
   font: inherit;
-  font-weight: 700;
+  font-weight: 600;
   font-size: 14px;
   cursor: pointer;
+  transition: transform 150ms ease, box-shadow 150ms ease, background 150ms ease;
 }
 .gage-pass:hover {
-  background: #1a8cd8;
+  background: var(--accent-strong);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
 }
 .gage-pass:disabled {
   opacity: 0.5;
   cursor: default;
+  transform: none;
+  box-shadow: none;
 }
