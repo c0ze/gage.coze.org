@@ -144,6 +144,59 @@
     // a position we don't own. Only a clean, my-turn frame is clickable.
     mount.style.pointerEvents = decision.interactive ? "auto" : "none";
 
+    // PASS control (reversi only): when it's our interactive turn but the side to
+    // move has NO legal placement while the game is not over, the rules force a
+    // pass. mustPass is optional (undefined on chess/checkers/gomoku), so guard.
+    // Clicking posts a pass through the SAME reply path a normal move uses, with
+    // the literal move text "pass".
+    if (
+      decision.interactive &&
+      typeof game.mustPass === "function" &&
+      game.mustPass(decision.state)
+    ) {
+      const passBtn = document.createElement("button");
+      passBtn.id = "gage-pass";
+      passBtn.type = "button";
+      passBtn.className = "gage-pass";
+      passBtn.textContent = "Pass";
+      passBtn.title = "You have no legal move — pass the turn";
+      passBtn.addEventListener("click", function () {
+        // Same reply grammar as onMove, but the move token is the literal "pass".
+        // The share link must encode the state AFTER the pass (turn flipped, board
+        // unchanged) so its meta.turn matches the reconstructed thread — mirror the
+        // normal onMove path, which seeds mv.state (the post-move state). Fall back
+        // to the pre-pass state if applyMoveText is somehow unavailable.
+        const afterPass =
+          (typeof game.applyMoveText === "function" &&
+            game.applyMoveText(decision.state, "pass")) ||
+          decision.state;
+        const text =
+          Gage.protocol.formatMove({
+            gameId: decision.gameId,
+            moveText: "pass",
+            isChallenge: false,
+          }) +
+          " " +
+          Gage.gameUrl(
+            Gage.buildShareSeed(game, afterPass, {
+              w: decision.white,
+              b: decision.black,
+              san: "pass",
+            })
+          );
+        passBtn.disabled = true;
+        mount.style.pointerEvents = "none";
+        setStatus("pass posted — press Reply to send");
+        Promise.resolve()
+          .then(function () { return Gage.threadTransport.postReply(text); })
+          .catch(function (e) {
+            setStatus("couldn't open the reply — " + (e && e.message ? e.message : e) + " · restoring");
+            refresh();
+          });
+      });
+      mount.appendChild(passBtn);
+    }
+
     if (decision.interactive) {
       Gage.renderGame(game, decision.state, mount, function (mv) {
         // A legal LOCAL move happened. Publish it as a reply carrying the SAN

@@ -51,7 +51,12 @@
 
   // Known game hashtags -> gameId. Kept explicit (not "any #word") so ordinary
   // hashtags in prose ("#chessisfun") aren't mistaken for a game declaration.
-  const GAME_TAGS = { "#chess": "chess" };
+  const GAME_TAGS = {
+    "#chess": "chess",
+    "#checkers": "checkers",
+    "#reversi": "reversi",
+    "#gomoku": "gomoku",
+  };
 
   // A standalone MARKER ANYWHERE in the text: bounded left (start/non-word) and
   // right (end/non-word), so "#gagexyz" or "word#gage" don't match, but a valid

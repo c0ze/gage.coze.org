@@ -25,15 +25,36 @@
   function renderGame(game, state, mount, onMove) {
     const { rows, cols } = game.boardSize;
     const hasCaptureHook = typeof game.isCapture === "function";
+    // PLACEMENT games (reversi, gomoku) declare moveKind === "place": a single
+    // click on a legal square commits immediately (no select step). MOVEMENT
+    // games (chess, checkers) leave moveKind unset and use the two-click flow.
+    const isPlacement = game.moveKind === "place";
     let current = state; // latest State
-    let selected = null; // Square string, or null
-    let targets = []; // legal destination Squares for `selected`
+    let selected = null; // Square string, or null (movement games only)
+    let targets = []; // legal destination Squares for `selected` (or all placements)
     let captures = new Set(); // subset of `targets` that are captures
 
     const grid = document.createElement("div");
     grid.className = "gage-board";
     grid.style.gridTemplateColumns = "repeat(" + cols + ", 1fr)";
     grid.style.gridTemplateRows = "repeat(" + rows + ", 1fr)"; // uniform rows — empty ranks must not collapse
+    // Responsive glyph: the board keeps a fixed 316px box (see .gage-board), so a
+    // 15x15 gomoku board packs far smaller cells than an 8x8 chess board. Scale
+    // the glyph to the CELL (316px / span) rather than the fixed 30px so large
+    // boards stay legible. Use an explicit px value — a percentage/`em` in
+    // font-size would resolve against the PARENT font-size, not the board width,
+    // and shrink the glyph to ~1px. span = max(rows, cols); 316/8*0.76 ≈ 30px, so
+    // an 8x8 board keeps its original glyph size.
+    const span = Math.max(rows, cols) || 8;
+    grid.style.fontSize = ((316 / span) * 0.76).toFixed(2) + "px";
+
+    // For placement games, recompute the set of ALL legal placement squares for
+    // the side to move (highlighted as move targets, and the click surface).
+    function refreshPlacementTargets() {
+      if (!isPlacement) return;
+      targets = typeof game.legalMoves === "function" ? game.legalMoves(current) : [];
+      captures = new Set();
+    }
 
     function draw() {
       const cells = game.view(current);
@@ -91,6 +112,24 @@
       // moves anyway, but draws by rule (threefold, 50-move, insufficient
       // material) still generate legal moves, so guard explicitly.
       if (game.terminal(current).over) return;
+      // PLACEMENT: a single click on a legal square commits immediately. from ===
+      // to === sq (see the placement-game contract). No select step.
+      if (isPlacement) {
+        if (targets.indexOf(sq) === -1) return; // not a legal placement — ignore
+        const text = game.moveText(current, sq, sq);
+        const next = game.applyMove(current, sq, sq);
+        if (next) {
+          current = next;
+          refreshPlacementTargets();
+          draw();
+          if (onMove) {
+            onMove({ from: sq, to: sq, text, seed: Gage.encodeSeed(current), state: current });
+          }
+        } else {
+          draw(); // illegal after all (shouldn't happen)
+        }
+        return;
+      }
       if (selected && targets.indexOf(sq) !== -1) {
         // Commit the move through the game module (which enforces legality).
         const from = selected;
@@ -114,6 +153,7 @@
     }
 
     mount.appendChild(grid);
+    refreshPlacementTargets(); // no-op for movement games; seeds placement hints
     draw();
     return {
       redraw: draw,
