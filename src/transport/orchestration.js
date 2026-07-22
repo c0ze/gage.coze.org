@@ -37,12 +37,28 @@
 
   // All @mentions in `text`, lowercased, in order. The BLACK player is the first
   // one that isn't the root author (the challenger @mentions their rival).
+  //
+  // Handles are platform-shaped and MUST match what the transport adapters return
+  // from getMyHandle/getRootAuthorHandle:
+  //   X        -> [A-Za-z0-9_]           ("arda")
+  //   Bluesky  -> DNS-style, dots/hyphens ("rival.bsky.social")
+  //   Mastodon -> local "user" OR remote "user@instance.tld"
+  // So we capture an initial [A-Za-z0-9_.-] run, then an OPTIONAL "@instance" tail
+  // (Mastodon remote), and strip any trailing "." / "-" that sentence punctuation
+  // may glue on (e.g. "@rival." at the end of a clause).
   function mentionsOf(text) {
     const out = [];
     if (typeof text !== "string") return out;
-    const re = /@([A-Za-z0-9_]+)/g;
+    // Lookbehind: the leading "@" must START a mention (preceded by start-of-text
+    // or a non-handle char), so an email's domain ("a@b.com") is NOT misread as a
+    // mention of "b.com". The optional "@instance" tail (Mastodon) is inside the
+    // capture, so remote handles still parse whole.
+    const re = /(?<![A-Za-z0-9_.@\-])@([A-Za-z0-9_][A-Za-z0-9_.\-]*(?:@[A-Za-z0-9_][A-Za-z0-9_.\-]*)?)/g;
     let m;
-    while ((m = re.exec(text)) !== null) out.push(m[1].toLowerCase());
+    while ((m = re.exec(text)) !== null) {
+      const h = m[1].toLowerCase().replace(/[.\-]+$/, "");
+      if (h) out.push(h);
+    }
     return out;
   }
 
